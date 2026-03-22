@@ -382,7 +382,7 @@
         return r.json();
       })
       .then(function(data) {
-        chatTitle.textContent = data.title || data.name;
+        if (!isEditingTitle) chatTitle.textContent = data.title || data.name;
         updateStatusDot(data.status);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
