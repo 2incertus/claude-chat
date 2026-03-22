@@ -27,6 +27,7 @@ ALLOWED_COMMANDS = {
     "capture-pane",
     "send-keys",
     "display-message",
+    "kill-session",
 }
 
 # ---------------------------------------------------------------------------
@@ -92,7 +93,11 @@ def validate_session_name(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 def discover_sessions() -> list[dict]:
-    """Return list of sessions where pane_current_command == 'claude'."""
+    """Return list of all tmux sessions with a state field.
+
+    state='active' if pane_current_command == 'claude', else state='dead'.
+    Sessions with names starting with '-' are always skipped.
+    """
     try:
         raw = run_tmux(
             "list-panes", "-a",
@@ -107,20 +112,21 @@ def discover_sessions() -> list[dict]:
         if len(parts) < 4:
             continue
         sname, pid_str, cmd, cwd = parts[0], parts[1], parts[2], parts[3]
-        if cmd != "claude":
-            continue
         # Skip names starting with '-' -- they break tmux -t flag parsing
         if sname.startswith("-"):
             continue
 
+        state = "active" if cmd == "claude" else "dead"
+
         meta: dict = {}
-        try:
-            pid = int(pid_str)
-            meta_path = os.path.join(CLAUDE_DATA_DIR, "sessions", f"{pid}.json")
-            with open(meta_path) as f:
-                meta = json.load(f)
-        except Exception:
-            pass  # soft failure -- metadata is optional
+        if state == "active":
+            try:
+                pid = int(pid_str)
+                meta_path = os.path.join(CLAUDE_DATA_DIR, "sessions", f"{pid}.json")
+                with open(meta_path) as f:
+                    meta = json.load(f)
+            except Exception:
+                pass  # soft failure -- metadata is optional
 
         sessions.append({
             "name": sname,
@@ -128,6 +134,7 @@ def discover_sessions() -> list[dict]:
             "cwd": meta.get("cwd", cwd),
             "session_id": meta.get("sessionId", ""),
             "started_at": meta.get("startedAt", 0),
+            "state": state,
         })
 
     return sessions
@@ -136,9 +143,18 @@ def discover_sessions() -> list[dict]:
 def _is_claude_session(name: str) -> bool:
     """Return True if the named session has a pane running 'claude'."""
     for s in discover_sessions():
-        if s["name"] == name:
+        if s["name"] == name and s.get("state") == "active":
             return True
     return False
+
+
+def _session_exists(name: str) -> bool:
+    """Return True if a tmux session with this name exists (regardless of what's running)."""
+    try:
+        raw = run_tmux("list-sessions", "-F", "#{session_name}")
+        return name in raw.splitlines()
+    except RuntimeError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +423,20 @@ async def list_sessions():
     result = []
     for s in sessions:
         name = s["name"]
+
+        if s["state"] == "dead":
+            result.append({
+                "name": name,
+                "pid": s["pid"],
+                "title": name,
+                "cwd": s["cwd"],
+                "last_activity": "",
+                "status": "dead",
+                "state": "dead",
+                "preview": "",
+            })
+            continue
+
         try:
             raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-100")
         except RuntimeError:
@@ -432,6 +462,7 @@ async def list_sessions():
             "cwd": s["cwd"],
             "last_activity": time_ago(s.get("started_at", 0)),
             "status": get_session_status(raw),
+            "state": "active",
             "preview": preview,
         })
 
@@ -502,6 +533,49 @@ async def send_to_session(name: str, body: SendBody):
     run_tmux("send-keys", "-t", name, "Enter")
 
     return {"sent": True, "session": name}
+
+
+@app.post("/api/sessions/{name}/kill")
+async def kill_session_endpoint(name: str):
+    """Send Ctrl+C to Claude, wait, verify it exited."""
+    validate_session_name(name)
+    if not _session_exists(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+    run_tmux("send-keys", "-t", name, "C-c")
+    await asyncio.sleep(2)
+    still_active = _is_claude_session(name)
+    if still_active:
+        run_tmux("send-keys", "-t", name, "C-c")
+        await asyncio.sleep(1)
+        still_active = _is_claude_session(name)
+    state = "active" if still_active else "dead"
+    return {"killed": not still_active, "state": state}
+
+
+@app.post("/api/sessions/{name}/respawn")
+async def respawn_session(name: str):
+    """Respawn Claude in an existing tmux session."""
+    validate_session_name(name)
+    if not _session_exists(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if _is_claude_session(name):
+        return {"respawned": False, "message": "Session already has Claude running"}
+    run_tmux("send-keys", "-t", name, "-l", "claude --continue")
+    run_tmux("send-keys", "-t", name, "Enter")
+    return {"respawned": True}
+
+
+@app.delete("/api/sessions/{name}")
+async def dismiss_session(name: str):
+    """Kill the tmux session entirely."""
+    validate_session_name(name)
+    if not _session_exists(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if _is_claude_session(name):
+        run_tmux("send-keys", "-t", name, "C-c")
+        await asyncio.sleep(1)
+    run_tmux("kill-session", "-t", name)
+    return {"dismissed": True}
 
 
 @app.get("/api/sessions/{name}/poll")
