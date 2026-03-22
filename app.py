@@ -133,6 +133,7 @@ def discover_sessions() -> list[dict]:
         return []
 
     sessions = []
+    seen_pids: set[str] = set()
     for line in raw.splitlines():
         parts = line.split("\t")
         if len(parts) < 5:
@@ -141,6 +142,12 @@ def discover_sessions() -> list[dict]:
         # Skip names starting with '-' -- they break tmux -t flag parsing
         if sname.startswith("-"):
             continue
+        # Skip sessions sharing a PID with an already-seen session
+        # (happens when worktree agents create duplicate tmux sessions)
+        if cmd == "claude" and pid_str in seen_pids:
+            continue
+        if cmd == "claude":
+            seen_pids.add(pid_str)
 
         # Active only if claude is running AND pane is alive
         state = "active" if (cmd == "claude" and pane_dead != "1") else "dead"
@@ -636,13 +643,16 @@ async def respawn_session(name: str):
 
 @app.delete("/api/sessions/{name}")
 async def dismiss_session(name: str):
-    """Kill the tmux session entirely."""
+    """Kill the tmux session entirely.
+
+    Uses kill-session directly without sending C-c first.
+    Sending C-c before kill is dangerous when sessions share a Claude process
+    (the C-c kills Claude in all sessions sharing that PID).
+    kill-session removes just this tmux session cleanly.
+    """
     validate_session_name(name)
     if not _session_exists(name):
         raise HTTPException(status_code=404, detail="Session not found")
-    if _is_claude_session(name):
-        run_tmux("send-keys", "-t", name, "C-c")
-        await asyncio.sleep(1)
     run_tmux("kill-session", "-t", name)
     return {"dismissed": True}
 
