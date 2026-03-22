@@ -537,17 +537,33 @@ async def send_to_session(name: str, body: SendBody):
 
 @app.post("/api/sessions/{name}/kill")
 async def kill_session_endpoint(name: str):
-    """Send Ctrl+C to Claude, wait, verify it exited."""
+    """Kill Claude in the tmux pane. Tmux session stays alive for respawn."""
     validate_session_name(name)
     if not _session_exists(name):
         raise HTTPException(status_code=404, detail="Session not found")
+    if not _is_claude_session(name):
+        return {"killed": True, "state": "dead"}
+
+    # Escape any menus/prompts, then Ctrl+C to cancel, then /exit
+    run_tmux("send-keys", "-t", name, "Escape")
+    await asyncio.sleep(0.2)
     run_tmux("send-keys", "-t", name, "C-c")
+    await asyncio.sleep(1)
+    run_tmux("send-keys", "-t", name, "C-c")
+    await asyncio.sleep(0.5)
+    # Clear any partial input and send /exit
+    run_tmux("send-keys", "-t", name, "C-u")  # clear line
+    run_tmux("send-keys", "-t", name, "-l", "/exit")
+    run_tmux("send-keys", "-t", name, "Enter")
     await asyncio.sleep(2)
+
     still_active = _is_claude_session(name)
     if still_active:
-        run_tmux("send-keys", "-t", name, "C-c")
+        # Last resort: Ctrl+D (EOF)
+        run_tmux("send-keys", "-t", name, "C-d")
         await asyncio.sleep(1)
         still_active = _is_claude_session(name)
+
     state = "active" if still_active else "dead"
     return {"killed": not still_active, "state": state}
 
