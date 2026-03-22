@@ -59,6 +59,7 @@ http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
 TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
+_title_lock = asyncio.Lock()
 
 
 @asynccontextmanager
@@ -530,6 +531,7 @@ async def list_sessions():
 @app.get("/api/sessions/{name}")
 async def get_session(name: str, lines: int = 10000):
     validate_session_name(name)
+    lines = min(max(lines, 1), 50000)
     if not _is_claude_session(name):
         raise HTTPException(status_code=404, detail="Session not found or not a Claude session")
 
@@ -665,25 +667,26 @@ async def set_session_title(name: str, body: dict):
     if not title:
         raise HTTPException(status_code=400, detail="Title must not be empty")
     title_cache[name] = title[:60]
-    # Persist to disk (atomic write)
-    try:
-        existing = {}
-        if os.path.exists(TITLES_FILE):
-            with open(TITLES_FILE) as f:
-                existing = json.load(f)
-        existing[name] = title[:60]
-        tmp = TITLES_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(existing, f)
-        os.replace(tmp, TITLES_FILE)
-    except Exception:
-        pass
+    async with _title_lock:
+        try:
+            existing = {}
+            if os.path.exists(TITLES_FILE):
+                with open(TITLES_FILE) as f:
+                    existing = json.load(f)
+            existing[name] = title[:60]
+            tmp = TITLES_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(existing, f)
+            os.replace(tmp, TITLES_FILE)
+        except Exception:
+            pass
     return {"title": title_cache[name]}
 
 
 @app.get("/api/sessions/{name}/poll")
 async def poll_session(name: str, hash: str = "", lines: int = 10000):
     validate_session_name(name)
+    lines = min(max(lines, 1), 50000)
     if not _is_claude_session(name):
         raise HTTPException(status_code=404, detail="Session not found or not a Claude session")
 
@@ -841,7 +844,7 @@ async def get_config():
 
 @app.post("/api/sessions")
 async def create_session(body: dict):
-    path = body.get("path", "/home/ubuntu")
+    path = os.path.realpath(body.get("path", "/home/ubuntu"))
     name = body.get("name", "")
 
     if not _is_allowed_path(path):

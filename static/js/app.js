@@ -448,7 +448,7 @@
   function renderMarkdown(text) {
     var frag = document.createDocumentFragment();
     // Escape HTML entities first (security)
-    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     // Split into blocks, preserving fenced code blocks
     var blocks = [];
     var lines = text.split('\n');
@@ -1037,7 +1037,11 @@
       micBtn.style.display = 'flex';
     }
   }
-  textInput.addEventListener('input', toggleSendMic);
+  textInput.addEventListener('input', function() {
+    textInput.style.height = 'auto';
+    textInput.style.height = Math.min(textInput.scrollHeight, 100) + 'px';
+    toggleSendMic();
+  });
 
   sendBtn.addEventListener('click', function() {
     var text = textInput.value.trim();
@@ -1502,6 +1506,10 @@
         document.documentElement.setAttribute('data-theme', value);
       } else {
         document.documentElement.removeAttribute('data-theme');
+      }
+      var metaTheme = document.querySelector('meta[name="theme-color"]');
+      if (metaTheme) {
+        metaTheme.setAttribute('content', value === 'light' ? '#F2F0ED' : '#0A0A0A');
       }
     } else if (key === 'pollSpeed') {
       pollSpeedSetting = value || 'normal';
