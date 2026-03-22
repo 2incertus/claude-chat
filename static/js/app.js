@@ -1,0 +1,918 @@
+(function() {
+  'use strict';
+
+  // ========== State ==========
+  var currentSession = null;
+  var contentHash = '';
+  var pollTimer = null;
+  var idleCount = 0;
+  var lastMessageCount = 0;
+  var isUserNearBottom = true;
+  var ttsUtterance = null;
+  var ttsPlayingBtn = null;
+  var sessionListTimer = null;
+  var pendingMessages = []; // optimistic messages awaiting server confirmation
+
+  // Voice state
+  var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var hasNativeSTT = !!NativeSR;
+  var recognition = null;
+  var finalTranscript = '';
+  var isRecording = false;
+  var isProcessing = false;
+
+  // ========== Elements ==========
+  var screenList = document.getElementById('screenList');
+  var screenChat = document.getElementById('screenChat');
+  var sessionListEl = document.getElementById('sessionList');
+  var sessionCountEl = document.getElementById('sessionCount');
+  var emptyStateEl = document.getElementById('emptyState');
+  var pullIndicator = document.getElementById('pullIndicator');
+
+  var backBtn = document.getElementById('backBtn');
+  var chatTitle = document.getElementById('chatTitle');
+  var chatStatus = document.getElementById('chatStatus');
+  var chatFeed = document.getElementById('chatFeed');
+  var typingIndicator = document.getElementById('typingIndicator');
+  var newMsgPill = document.getElementById('newMsgPill');
+
+  var previewBar = document.getElementById('previewBar');
+  var previewText = document.getElementById('previewText');
+  var previewSend = document.getElementById('previewSend');
+  var previewCancel = document.getElementById('previewCancel');
+
+  var micBtn = document.getElementById('micBtn');
+  var micLabel = document.getElementById('micLabel');
+  var textInput = document.getElementById('textInput');
+  var sendBtn = document.getElementById('sendBtn');
+  var attachBtn = document.getElementById('attachBtn');
+  var fileInput = document.getElementById('fileInput');
+  var uploadToast = document.getElementById('uploadToast');
+  var bellBtn = document.getElementById('bellBtn');
+
+  // ========== Clipboard Helpers ==========
+  function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function() { fallbackCopy(text); });
+    } else {
+      fallbackCopy(text);
+    }
+    showCopyToast();
+  }
+
+  function showCopyToast() {
+    uploadToast.textContent = 'Copied!';
+    uploadToast.style.display = 'block';
+    setTimeout(function() { uploadToast.style.display = 'none'; }, 1500);
+  }
+
+  // ========== Navigation ==========
+  // Per-session draft storage
+  var sessionDrafts = {};
+
+  function showSessionList() {
+    // Save current draft before leaving
+    if (currentSession && textInput.value.trim()) {
+      sessionDrafts[currentSession] = textInput.value;
+    } else if (currentSession) {
+      delete sessionDrafts[currentSession];
+    }
+    textInput.value = '';
+    currentSession = null;
+    contentHash = '';
+    idleCount = 0;
+    lastMessageCount = 0;
+    pendingMessages = [];
+    stopPolling();
+    stopTTS();
+    hidePreview();
+    screenList.className = 'screen';
+    screenChat.className = 'screen hidden-right';
+    loadSessions();
+    startSessionListPolling();
+  }
+
+  function showSessionView(name) {
+    currentSession = name;
+    contentHash = '';
+    idleCount = 0;
+    lastMessageCount = 0;
+    stopSessionListPolling();
+
+    // Clear text input and restore any saved draft for this session
+    textInput.value = sessionDrafts[name] || '';
+    micLabel.textContent = '';
+
+    // clear feed safely
+    while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
+    typingIndicator.classList.remove('visible');
+    newMsgPill.classList.remove('visible');
+    hidePreview();
+    updateBellIcon();
+
+    screenList.className = 'screen hidden-left';
+    screenChat.className = 'screen';
+
+    loadSession(name);
+    startPolling();
+  }
+
+  backBtn.addEventListener('click', function() { showSessionList(); });
+
+  // Swipe-right to go back
+  var touchStartX = 0;
+  var touchStartY = 0;
+  screenChat.addEventListener('touchstart', function(e) {
+    var t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+  }, { passive: true });
+  screenChat.addEventListener('touchend', function(e) {
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = Math.abs(t.clientY - touchStartY);
+    if (touchStartX < 40 && dx > 80 && dy < 60) {
+      showSessionList();
+    }
+  }, { passive: true });
+
+  // ========== Session List ==========
+  function loadSessions() {
+    fetch('/api/sessions')
+      .then(function(r) { return r.json(); })
+      .then(function(sessions) {
+        renderSessionList(sessions);
+      })
+      .catch(function() {
+        // silent fail, will retry
+      });
+  }
+
+  function renderSessionList(sessions) {
+    // Remove old cards but keep emptyState
+    var cards = sessionListEl.querySelectorAll('.session-card');
+    for (var i = 0; i < cards.length; i++) {
+      sessionListEl.removeChild(cards[i]);
+    }
+
+    sessionCountEl.textContent = String(sessions.length);
+
+    if (sessions.length === 0) {
+      emptyStateEl.style.display = '';
+      return;
+    }
+    emptyStateEl.style.display = 'none';
+
+    sessions.forEach(function(s) {
+      var card = document.createElement('div');
+      card.className = 'session-card';
+      card.setAttribute('data-name', s.name);
+
+      var top = document.createElement('div');
+      top.className = 'session-card-top';
+
+      var title = document.createElement('div');
+      title.className = 'session-card-title';
+      title.textContent = s.title || s.name;
+
+      var meta = document.createElement('div');
+      meta.className = 'session-card-meta';
+
+      var time = document.createElement('span');
+      time.className = 'session-card-time';
+      time.textContent = s.last_activity || '';
+
+      var dot = document.createElement('div');
+      dot.className = 'session-card-status' + (s.status === 'working' ? ' working' : '');
+
+      meta.appendChild(time);
+      meta.appendChild(dot);
+      top.appendChild(title);
+      top.appendChild(meta);
+      card.appendChild(top);
+
+      if (s.cwd) {
+        var cwd = document.createElement('div');
+        cwd.className = 'session-card-cwd';
+        cwd.textContent = s.cwd;
+        card.appendChild(cwd);
+      }
+
+      if (s.preview) {
+        var preview = document.createElement('div');
+        preview.className = 'session-card-preview';
+        preview.textContent = s.preview;
+        card.appendChild(preview);
+      }
+
+      card.addEventListener('click', function() {
+        showSessionView(s.name);
+      });
+
+      sessionListEl.appendChild(card);
+    });
+  }
+
+  // Pull-to-refresh
+  var pullStartY = 0;
+  var isPulling = false;
+  sessionListEl.addEventListener('touchstart', function(e) {
+    if (sessionListEl.scrollTop <= 0) {
+      pullStartY = e.touches[0].clientY;
+      isPulling = true;
+    }
+  }, { passive: true });
+  sessionListEl.addEventListener('touchmove', function(e) {
+    if (!isPulling) return;
+    var dy = e.touches[0].clientY - pullStartY;
+    if (dy > 50 && sessionListEl.scrollTop <= 0) {
+      pullIndicator.classList.add('visible');
+    }
+  }, { passive: true });
+  sessionListEl.addEventListener('touchend', function() {
+    if (pullIndicator.classList.contains('visible')) {
+      pullIndicator.classList.remove('visible');
+      loadSessions();
+    }
+    isPulling = false;
+  }, { passive: true });
+
+  function startSessionListPolling() {
+    stopSessionListPolling();
+    sessionListTimer = setInterval(loadSessions, 8000);
+  }
+  function stopSessionListPolling() {
+    if (sessionListTimer) { clearInterval(sessionListTimer); sessionListTimer = null; }
+  }
+
+  // ========== Session View ==========
+  function loadSession(name) {
+    fetch('/api/sessions/' + encodeURIComponent(name))
+      .then(function(r) {
+        if (!r.ok) throw new Error('not found');
+        return r.json();
+      })
+      .then(function(data) {
+        chatTitle.textContent = data.title || data.name;
+        updateStatusDot(data.status);
+        contentHash = data.content_hash || '';
+        renderMessages(data.messages || []);
+        lastMessageCount = (data.messages || []).length;
+        scrollToBottom(true);
+      })
+      .catch(function() {
+        chatTitle.textContent = 'Session unavailable';
+      });
+  }
+
+  function updateStatusDot(status) {
+    if (status === 'working') {
+      chatStatus.className = 'status-dot working';
+      typingIndicator.classList.add('visible');
+    } else {
+      chatStatus.className = 'status-dot';
+      typingIndicator.classList.remove('visible');
+    }
+  }
+
+  function renderMessages(messages) {
+    // Clear feed
+    while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
+
+    messages.forEach(function(m) {
+      appendMessage(m, false);
+    });
+
+    // Re-append pending messages not yet in server data
+    var now = Date.now();
+    function normalize(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+    pendingMessages = pendingMessages.filter(function(pm) {
+      if (now - pm.ts > 30000) return false; // expire after 30s
+      var pmNorm = normalize(pm.content);
+      var found = messages.some(function(m) {
+        return m.role === 'user' && normalize(m.content).indexOf(pmNorm.substring(0, 40)) >= 0;
+      });
+      return !found;
+    });
+    pendingMessages.forEach(function(pm) {
+      appendMessage(pm, false);
+    });
+  }
+
+  function appendMessage(m, animate) {
+    var el;
+    if (m.role === 'user') {
+      el = document.createElement('div');
+      el.className = 'msg msg-user';
+      el.textContent = m.content || m.text || '';
+      if (!animate) el.style.animation = 'none';
+    } else if (m.role === 'assistant') {
+      el = document.createElement('div');
+      el.className = 'msg msg-assistant';
+      var textSpan = document.createElement('div');
+      textSpan.className = 'msg-assistant-text';
+      var content = m.content || m.text || '';
+      // Code block detection: split into code vs prose
+      var lines = content.split('\n');
+      var codeBuf = [];
+      var inCode = false;
+      var codeRe = new RegExp('^(\\s{4,}\\S|\\s*\\d+[\u2192|:]\\s)');
+      for (var li = 0; li < lines.length; li++) {
+        var isCode = codeRe.test(lines[li]);
+        if (isCode) {
+          if (!inCode && codeBuf.length === 0) {
+            // flush any preceding text
+          }
+          inCode = true;
+          codeBuf.push(lines[li]);
+        } else {
+          if (inCode && codeBuf.length >= 2) {
+            var pre = document.createElement('pre');
+            pre.className = 'code-block';
+            var code = document.createElement('code');
+            code.textContent = codeBuf.join('\n');
+            pre.appendChild(code);
+            var copyBtn = document.createElement('button');
+            copyBtn.className = 'code-copy-btn';
+            copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+            copyBtn.title = 'Copy code';
+            (function(codeText) {
+              copyBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                copyToClipboard(codeText);
+              });
+            })(codeBuf.join('\n'));
+            pre.appendChild(copyBtn);
+            textSpan.appendChild(pre);
+            codeBuf = [];
+            inCode = false;
+          } else if (inCode) {
+            // Too few code lines, treat as text
+            textSpan.appendChild(document.createTextNode(codeBuf.join('\n') + '\n'));
+            codeBuf = [];
+            inCode = false;
+          }
+          textSpan.appendChild(document.createTextNode(lines[li] + (li < lines.length - 1 ? '\n' : '')));
+        }
+      }
+      if (inCode && codeBuf.length >= 2) {
+        var pre = document.createElement('pre');
+        pre.className = 'code-block';
+        var code = document.createElement('code');
+        code.textContent = codeBuf.join('\n');
+        pre.appendChild(code);
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy-btn';
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+        copyBtn.title = 'Copy code';
+        (function(codeText) {
+          copyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyToClipboard(codeText);
+          });
+        })(codeBuf.join('\n'));
+        pre.appendChild(copyBtn);
+        textSpan.appendChild(pre);
+      } else if (codeBuf.length > 0) {
+        textSpan.appendChild(document.createTextNode(codeBuf.join('\n')));
+      }
+      el.appendChild(textSpan);
+      // Action row below text
+      var actions = document.createElement('div');
+      actions.className = 'msg-actions';
+      // Copy button
+      var msgCopyBtn = document.createElement('button');
+      msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
+      msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      msgCopyBtn.title = 'Copy message';
+      (function(msgContent) {
+        msgCopyBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          copyToClipboard(msgContent);
+        });
+      })(content);
+      actions.appendChild(msgCopyBtn);
+      // TTS button
+      var ttsBtn = document.createElement('button');
+      ttsBtn.className = 'msg-action-btn msg-tts-btn';
+      ttsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      ttsBtn.title = 'Read aloud';
+      var msgText = content;
+      ttsBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        toggleTTS(msgText, ttsBtn);
+      });
+      actions.appendChild(ttsBtn);
+      el.appendChild(actions);
+      if (!animate) el.style.animation = 'none';
+    } else if (m.role === 'tool') {
+      // Hide tool calls -- they're noise in a chat view
+      return;
+    } else {
+      return;
+    }
+    chatFeed.appendChild(el);
+  }
+
+  // ========== Polling ==========
+  function startPolling() {
+    stopPolling();
+    doPoll();
+  }
+
+  function stopPolling() {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  }
+
+  function doPoll() {
+    if (!currentSession) return;
+    var url = '/api/sessions/' + encodeURIComponent(currentSession) + '/poll';
+    if (contentHash) url += '?hash=' + encodeURIComponent(contentHash);
+
+    fetch(url)
+      .then(function(r) {
+        if (!r.ok) throw new Error('poll fail');
+        return r.json();
+      })
+      .then(function(data) {
+        updateStatusDot(data.status);
+        checkNtfyTrigger(currentSession, data.status, data.has_changes ? data.messages : null);
+
+        if (data.has_changes && data.messages) {
+          contentHash = data.content_hash || '';
+          var newCount = data.messages.length;
+
+          // Check if user is near bottom before updating
+          checkScrollPosition();
+
+          // Re-render all messages (content_hash changed)
+          renderMessages(data.messages);
+
+          // If new messages arrived and user is near bottom, scroll
+          if (newCount > lastMessageCount) {
+            if (isUserNearBottom) {
+              scrollToBottom(false);
+            } else {
+              newMsgPill.classList.add('visible');
+            }
+          }
+          lastMessageCount = newCount;
+          idleCount = 0;
+        } else {
+          contentHash = data.content_hash || contentHash;
+          idleCount++;
+        }
+
+        schedulePoll();
+      })
+      .catch(function() {
+        idleCount++;
+        schedulePoll();
+      });
+  }
+
+  function schedulePoll() {
+    if (!currentSession) return;
+    var interval;
+    if (idleCount < 3) interval = 2000;
+    else if (idleCount < 6) interval = 5000;
+    else interval = 10000;
+    pollTimer = setTimeout(doPoll, interval);
+  }
+
+  // Pause/resume on visibility
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) {
+      stopPolling();
+      stopSessionListPolling();
+    } else {
+      if (currentSession) {
+        idleCount = 0;
+        startPolling();
+      } else {
+        loadSessions();
+        startSessionListPolling();
+      }
+    }
+  });
+
+  // ========== Scroll ==========
+  function checkScrollPosition() {
+    var el = chatFeed;
+    isUserNearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 100;
+  }
+
+  function scrollToBottom(force) {
+    if (force || isUserNearBottom) {
+      requestAnimationFrame(function() {
+        chatFeed.scrollTop = chatFeed.scrollHeight;
+      });
+      newMsgPill.classList.remove('visible');
+    }
+  }
+
+  chatFeed.addEventListener('scroll', function() {
+    checkScrollPosition();
+    if (isUserNearBottom) {
+      newMsgPill.classList.remove('visible');
+    }
+  }, { passive: true });
+
+  newMsgPill.addEventListener('click', function() {
+    chatFeed.scrollTop = chatFeed.scrollHeight;
+    newMsgPill.classList.remove('visible');
+  });
+
+  // ========== TTS ==========
+  function toggleTTS(text, btn) {
+    if (ttsPlayingBtn === btn) {
+      stopTTS();
+      return;
+    }
+    stopTTS();
+    if (!window.speechSynthesis) return;
+
+    ttsUtterance = new SpeechSynthesisUtterance(text);
+    ttsUtterance.rate = 1.0;
+    ttsUtterance.pitch = 1.0;
+
+    // Try to use a saved voice
+    var savedVoice = localStorage.getItem('chatVoice');
+    if (savedVoice) {
+      var voices = speechSynthesis.getVoices();
+      var match = voices.find(function(v) { return v.name === savedVoice; });
+      if (match) ttsUtterance.voice = match;
+    }
+
+    btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+    btn.classList.add('playing');
+    ttsPlayingBtn = btn;
+
+    var playSvg = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+    ttsUtterance.onend = function() {
+      btn.innerHTML = playSvg;
+      btn.classList.remove('playing');
+      ttsPlayingBtn = null;
+      ttsUtterance = null;
+    };
+    ttsUtterance.onerror = function() {
+      btn.innerHTML = playSvg;
+      btn.classList.remove('playing');
+      ttsPlayingBtn = null;
+      ttsUtterance = null;
+    };
+
+    speechSynthesis.speak(ttsUtterance);
+  }
+
+  function stopTTS() {
+    if (window.speechSynthesis) speechSynthesis.cancel();
+    if (ttsPlayingBtn) {
+      ttsPlayingBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+      ttsPlayingBtn.classList.remove('playing');
+      ttsPlayingBtn = null;
+    }
+    ttsUtterance = null;
+  }
+
+  // ========== Preview Bar ==========
+  function showPreview(text) {
+    previewText.value = text;
+    previewBar.classList.add('visible');
+    previewText.focus();
+  }
+
+  function hidePreview() {
+    previewBar.classList.remove('visible');
+    previewText.value = '';
+  }
+
+  previewSend.addEventListener('click', function() {
+    var text = previewText.value.trim();
+    if (!text || !currentSession) return;
+    sendMessage(text);
+    hidePreview();
+  });
+
+  previewCancel.addEventListener('click', function() {
+    hidePreview();
+    setMicState('idle');
+  });
+
+  function sendMessage(text) {
+    if (!currentSession) return;
+    // optimistically add user message and track it
+    var msg = { role: 'user', content: text, ts: Date.now() };
+    pendingMessages.push(msg);
+    appendMessage(msg, true);
+    scrollToBottom(true);
+
+    fetch('/api/sessions/' + encodeURIComponent(currentSession) + '/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text })
+    })
+    .then(function(r) {
+      if (!r.ok) throw new Error('send failed');
+      // Reset polling to active
+      idleCount = 0;
+      stopPolling();
+      startPolling();
+    })
+    .catch(function() {
+      // Show error in feed
+      appendMessage({ role: 'assistant', content: 'Failed to send message. Please try again.' }, true);
+      scrollToBottom(true);
+    });
+  }
+
+  // ========== Text Input + Send/Mic Toggle ==========
+  function toggleSendMic() {
+    if (textInput.value.trim()) {
+      sendBtn.style.display = 'flex';
+      micBtn.style.display = 'none';
+    } else {
+      sendBtn.style.display = 'none';
+      micBtn.style.display = 'flex';
+    }
+  }
+  textInput.addEventListener('input', toggleSendMic);
+
+  sendBtn.addEventListener('click', function() {
+    var text = textInput.value.trim();
+    if (text) {
+      sendMessage(text);
+      textInput.value = '';
+      toggleSendMic();
+    }
+  });
+
+  textInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      var text = textInput.value.trim();
+      if (text) {
+        sendMessage(text);
+        textInput.value = '';
+        toggleSendMic();
+      }
+    }
+  });
+
+  // ========== File Upload ==========
+  attachBtn.addEventListener('click', function() { fileInput.click(); });
+  fileInput.addEventListener('change', function() {
+    if (!fileInput.files || !fileInput.files[0] || !currentSession) return;
+    var f = fileInput.files[0];
+    uploadToast.textContent = 'Uploading ' + f.name + '...';
+    uploadToast.style.display = 'block';
+    var fd = new FormData();
+    fd.append('file', f);
+    fetch('/api/upload/' + encodeURIComponent(currentSession), { method: 'POST', body: fd })
+      .then(function(r) { if (!r.ok) throw new Error('upload failed'); return r.json(); })
+      .then(function(d) {
+        uploadToast.textContent = 'Uploaded!';
+        setTimeout(function() { uploadToast.style.display = 'none'; }, 2000);
+        // Put file reference in text input so user can edit and send
+        textInput.value = 'Please review the file I uploaded at ' + d.path;
+        textInput.focus();
+        toggleSendMic();
+      })
+      .catch(function() {
+        uploadToast.textContent = 'Upload failed';
+        setTimeout(function() { uploadToast.style.display = 'none'; }, 3000);
+      });
+    fileInput.value = '';
+  });
+
+  // ========== ntfy Notifications ==========
+  var previousStatus = {};
+  var lastNtfyTime = {};
+
+  function isNtfyEnabled(session) {
+    try {
+      var s = JSON.parse(localStorage.getItem('ntfy_sessions') || '{}');
+      return !!s[session];
+    } catch(e) { return false; }
+  }
+
+  function setNtfyEnabled(session, enabled) {
+    try {
+      var s = JSON.parse(localStorage.getItem('ntfy_sessions') || '{}');
+      s[session] = enabled;
+      localStorage.setItem('ntfy_sessions', JSON.stringify(s));
+    } catch(e) {}
+  }
+
+  function updateBellIcon() {
+    if (!currentSession) return;
+    var on = isNtfyEnabled(currentSession);
+    bellBtn.classList.toggle('active', on);
+    bellBtn.innerHTML = on
+      ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>'
+      : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>';
+  }
+
+  bellBtn.addEventListener('click', function() {
+    if (!currentSession) return;
+    var now = !isNtfyEnabled(currentSession);
+    setNtfyEnabled(currentSession, now);
+    updateBellIcon();
+  });
+
+  function sendNtfy(title, body) {
+    fetch('/api/ntfy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: title, body: body, tags: 'robot' })
+    }).catch(function() {});
+  }
+
+  var lastAsstCount = {};
+
+  function checkNtfyTrigger(sessionName, status, messages) {
+    var prev = previousStatus[sessionName];
+    previousStatus[sessionName] = status;
+    if (!isNtfyEnabled(sessionName)) return;
+
+    // Count current assistant messages
+    var asstMsgs = [];
+    if (messages && messages.length > 0) {
+      asstMsgs = messages.filter(function(m) { return m.role === 'assistant'; });
+    }
+    var curCount = asstMsgs.length;
+    var prevCount = lastAsstCount[sessionName] || 0;
+
+    // Trigger on: working->idle transition OR new assistant messages while idle
+    var statusTransition = (prev === 'working' && status === 'idle');
+    var newMessages = (curCount > prevCount && status === 'idle' && prevCount > 0);
+
+    if (curCount > 0) lastAsstCount[sessionName] = curCount;
+
+    if (statusTransition || newMessages) {
+      var now = Date.now();
+      if (lastNtfyTime[sessionName] && (now - lastNtfyTime[sessionName]) < 30000) return;
+      lastNtfyTime[sessionName] = now;
+      var body = '';
+      if (asstMsgs.length > 0) {
+        body = (asstMsgs[asstMsgs.length - 1].content || '').substring(0, 200);
+      } else {
+        var domMsgs = chatFeed.querySelectorAll('.msg-assistant-text');
+        if (domMsgs.length > 0) {
+          body = (domMsgs[domMsgs.length - 1].textContent || '').substring(0, 200);
+        }
+      }
+      if (body.length >= 200) {
+        var sp = body.lastIndexOf(' ');
+        if (sp > 150) body = body.substring(0, sp);
+        body += '...';
+      }
+      var title = 'Claude finished in ' + (chatTitle.textContent || sessionName);
+      sendNtfy(title, body);
+    }
+  }
+
+  // ========== Voice Input ==========
+  var mediaRecorder = null;
+  var audioChunks = [];
+
+  function setMicState(s) {
+    micBtn.className = 'mic-inline-btn ' + s;
+    if (s === 'idle') {
+      micLabel.textContent = '';
+    } else if (s === 'recording') {
+      micLabel.textContent = 'Listening...';
+    } else if (s === 'transcribing') {
+      micLabel.textContent = 'Transcribing (server)...';
+    }
+  }
+
+  micBtn.addEventListener('click', function() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  });
+
+  function startRecording() {
+    if (hasNativeSTT) {
+      micLabel.textContent = 'Listening (on-device)...';
+      startNativeRecording();
+    } else {
+      micLabel.textContent = 'Recording (Whisper)...';
+      startWhisperRecording();
+    }
+  }
+
+  // --- Native Web Speech API path ---
+  function startNativeRecording() {
+    recognition = new NativeSR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    finalTranscript = '';
+    isRecording = true;
+    setMicState('recording');
+
+    recognition.onresult = function(e) {
+      var interim = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript;
+        else interim += e.results[i][0].transcript;
+      }
+      var display = (finalTranscript + interim).trim();
+      if (display) micLabel.textContent = display;
+    };
+
+    recognition.onend = function() {
+      isRecording = false;
+      var text = finalTranscript.trim();
+      if (text) { textInput.value = text; textInput.focus(); toggleSendMic(); }
+      else { micLabel.textContent = 'No speech detected'; setTimeout(function() { micLabel.textContent = ''; }, 1500); }
+      setMicState('idle');
+    };
+
+    recognition.onerror = function(e) {
+      isRecording = false;
+      if (e.error === 'not-allowed') {
+        micLabel.textContent = 'Native mic denied, falling back to Whisper...';
+        hasNativeSTT = false;
+        setTimeout(function() { startWhisperRecording(); }, 500);
+        return;
+      }
+      micLabel.textContent = e.error === 'no-speech' ? 'No speech detected' : 'Error: ' + e.error;
+      setTimeout(function() { micLabel.textContent = ''; }, 2000);
+      setMicState('idle');
+    };
+
+    recognition.start();
+  }
+
+  // --- Whisper fallback path (MediaRecorder + server-side STT) ---
+  function startWhisperRecording() {
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+      isRecording = true;
+      setMicState('recording');
+      audioChunks = [];
+
+      var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+      mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) audioChunks.push(e.data); };
+      mediaRecorder.onstop = function() {
+        stream.getTracks().forEach(function(t) { t.stop(); });
+        if (audioChunks.length === 0) { setMicState('idle'); return; }
+        setMicState('transcribing');
+        var blob = new Blob(audioChunks, { type: mimeType });
+        var form = new FormData();
+        form.append('file', blob, 'recording.webm');
+        fetch('/api/transcribe', { method: 'POST', body: form })
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            var text = (data.text || '').trim();
+            if (text) { textInput.value = text; textInput.focus(); toggleSendMic(); }
+            else { micLabel.textContent = 'No speech detected'; setTimeout(function() { micLabel.textContent = ''; }, 1500); }
+          })
+          .catch(function(err) {
+            micLabel.textContent = 'Transcription failed';
+            setTimeout(function() { micLabel.textContent = ''; }, 2000);
+          })
+          .finally(function() { setMicState('idle'); });
+      };
+      mediaRecorder.start();
+
+      // Auto-stop after 30 seconds
+      setTimeout(function() { if (isRecording) stopRecording(); }, 30000);
+    }).catch(function() {
+      micLabel.textContent = 'Mic blocked - open Settings > Safari > Microphone';
+      setMicState('idle');
+    });
+  }
+
+  function stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    if (recognition) recognition.stop();
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  }
+
+  // ========== Init ==========
+  loadSessions();
+  startSessionListPolling();
+
+})();
