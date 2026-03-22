@@ -117,8 +117,15 @@
     textInput.value = sessionDrafts[name] || '';
     micLabel.textContent = '';
 
-    // clear feed safely
+    // clear feed and show loading state
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
+    var loadingEl = document.createElement('div');
+    loadingEl.className = 'empty-state';
+    loadingEl.id = 'chatLoading';
+    loadingEl.innerHTML = '<div class="typing-dot" style="animation:typingPulse 1.2s infinite"></div><div class="typing-dot" style="animation:typingPulse 1.2s infinite 0.2s"></div><div class="typing-dot" style="animation:typingPulse 1.2s infinite 0.4s"></div>';
+    loadingEl.style.flexDirection = 'row';
+    loadingEl.style.gap = '5px';
+    chatFeed.appendChild(loadingEl);
     typingIndicator.classList.remove('visible');
     newMsgPill.classList.remove('visible');
     hidePreview();
@@ -270,6 +277,9 @@
       // Click to open (only active sessions)
       if (s.state === 'active') {
         card.addEventListener('click', function() {
+          // Immediate visual feedback
+          card.style.opacity = '0.5';
+          card.style.transform = 'scale(0.97)';
           showSessionView(s.name);
         });
       }
