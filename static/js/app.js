@@ -244,6 +244,12 @@
 
       meta.appendChild(timeEl);
       meta.appendChild(dot);
+      if (s.state === 'dead') {
+        var deadLabel = document.createElement('span');
+        deadLabel.className = 'session-card-dead-label';
+        deadLabel.textContent = 'EXITED';
+        meta.appendChild(deadLabel);
+      }
       top.appendChild(title);
       top.appendChild(meta);
       card.appendChild(top);
@@ -255,7 +261,7 @@
         card.appendChild(cwd);
       }
 
-      if (s.preview && s.state !== 'dead') {
+      if (s.preview) {
         var preview = document.createElement('div');
         preview.className = 'session-card-preview';
         preview.textContent = s.preview;
@@ -416,6 +422,133 @@
     });
   }
 
+  // ========== Markdown Renderer ==========
+  function renderMarkdown(text) {
+    var frag = document.createDocumentFragment();
+    // Escape HTML entities first (security)
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Split into blocks, preserving fenced code blocks
+    var blocks = [];
+    var lines = text.split('\n');
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^```/.test(line)) {
+        var lang = line.replace(/^```\s*/, '').trim();
+        var codeLines = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++;
+        blocks.push({ type: 'code', content: codeLines.join('\n'), lang: lang });
+        continue;
+      }
+      if (!line.trim()) { i++; continue; }
+      var group = [];
+      while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i])) {
+        group.push(lines[i]);
+        i++;
+      }
+      blocks.push({ type: 'lines', lines: group });
+    }
+    for (var b = 0; b < blocks.length; b++) {
+      var block = blocks[b];
+      if (block.type === 'code') {
+        var pre = document.createElement('pre');
+        pre.className = 'code-block';
+        var code = document.createElement('code');
+        code.textContent = block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        pre.appendChild(code);
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy-btn';
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+        copyBtn.title = 'Copy code';
+        (function(codeText) {
+          copyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyToClipboard(codeText);
+          });
+        })(block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+        pre.appendChild(copyBtn);
+        frag.appendChild(pre);
+        continue;
+      }
+      var groupLines = block.lines;
+      var li = 0;
+      while (li < groupLines.length) {
+        var gl = groupLines[li];
+        var headerMatch = gl.match(/^(#{1,3})\s+(.+)/);
+        if (headerMatch) {
+          var level = headerMatch[1].length;
+          var h = document.createElement('h' + level);
+          h.appendChild(applyInline(headerMatch[2]));
+          frag.appendChild(h);
+          li++;
+          continue;
+        }
+        if (/^[-*]{3,}\s*$/.test(gl) && !/\S/.test(gl.replace(/[-*]/g, ''))) {
+          frag.appendChild(document.createElement('hr'));
+          li++;
+          continue;
+        }
+        if (/^[\-*]\s+/.test(gl)) {
+          var ul = document.createElement('ul');
+          while (li < groupLines.length && /^[\-*]\s+/.test(groupLines[li])) {
+            var liEl = document.createElement('li');
+            liEl.appendChild(applyInline(groupLines[li].replace(/^[\-*]\s+/, '')));
+            ul.appendChild(liEl);
+            li++;
+          }
+          frag.appendChild(ul);
+          continue;
+        }
+        if (/^\d+\.\s+/.test(gl)) {
+          var ol = document.createElement('ol');
+          while (li < groupLines.length && /^\d+\.\s+/.test(groupLines[li])) {
+            var liEl = document.createElement('li');
+            liEl.appendChild(applyInline(groupLines[li].replace(/^\d+\.\s+/, '')));
+            ol.appendChild(liEl);
+            li++;
+          }
+          frag.appendChild(ol);
+          continue;
+        }
+        var pLines = [];
+        while (li < groupLines.length &&
+               !groupLines[li].match(/^#{1,3}\s+/) &&
+               !/^[-*]{3,}\s*$/.test(groupLines[li]) &&
+               !/^[\-*]\s+/.test(groupLines[li]) &&
+               !/^\d+\.\s+/.test(groupLines[li])) {
+          pLines.push(groupLines[li]);
+          li++;
+        }
+        if (pLines.length > 0) {
+          var p = document.createElement('p');
+          p.appendChild(applyInline(pLines.join(' ')));
+          frag.appendChild(p);
+        }
+      }
+    }
+    return frag;
+  }
+
+  function applyInline(text) {
+    var frag = document.createDocumentFragment();
+    var html = text
+      .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    var span = document.createElement('span');
+    span.innerHTML = html;
+    while (span.firstChild) {
+      frag.appendChild(span.firstChild);
+    }
+    return frag;
+  }
+
   function appendMessage(m, animate) {
     var el;
     if (m.role === 'user') {
@@ -429,75 +562,10 @@
       var textSpan = document.createElement('div');
       textSpan.className = 'msg-assistant-text';
       var content = m.content || m.text || '';
-      // Code block detection: split into code vs prose
-      var lines = content.split('\n');
-      var codeBuf = [];
-      var inCode = false;
-      var codeRe = new RegExp('^(\\s{4,}\\S|\\s*\\d+[\u2192|:]\\s)');
-      for (var li = 0; li < lines.length; li++) {
-        var isCode = codeRe.test(lines[li]);
-        if (isCode) {
-          if (!inCode && codeBuf.length === 0) {
-            // flush any preceding text
-          }
-          inCode = true;
-          codeBuf.push(lines[li]);
-        } else {
-          if (inCode && codeBuf.length >= 2) {
-            var pre = document.createElement('pre');
-            pre.className = 'code-block';
-            var code = document.createElement('code');
-            code.textContent = codeBuf.join('\n');
-            pre.appendChild(code);
-            var copyBtn = document.createElement('button');
-            copyBtn.className = 'code-copy-btn';
-            copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-            copyBtn.title = 'Copy code';
-            (function(codeText) {
-              copyBtn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                copyToClipboard(codeText);
-              });
-            })(codeBuf.join('\n'));
-            pre.appendChild(copyBtn);
-            textSpan.appendChild(pre);
-            codeBuf = [];
-            inCode = false;
-          } else if (inCode) {
-            // Too few code lines, treat as text
-            textSpan.appendChild(document.createTextNode(codeBuf.join('\n') + '\n'));
-            codeBuf = [];
-            inCode = false;
-          }
-          textSpan.appendChild(document.createTextNode(lines[li] + (li < lines.length - 1 ? '\n' : '')));
-        }
-      }
-      if (inCode && codeBuf.length >= 2) {
-        var pre = document.createElement('pre');
-        pre.className = 'code-block';
-        var code = document.createElement('code');
-        code.textContent = codeBuf.join('\n');
-        pre.appendChild(code);
-        var copyBtn = document.createElement('button');
-        copyBtn.className = 'code-copy-btn';
-        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-        copyBtn.title = 'Copy code';
-        (function(codeText) {
-          copyBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            copyToClipboard(codeText);
-          });
-        })(codeBuf.join('\n'));
-        pre.appendChild(copyBtn);
-        textSpan.appendChild(pre);
-      } else if (codeBuf.length > 0) {
-        textSpan.appendChild(document.createTextNode(codeBuf.join('\n')));
-      }
+      textSpan.appendChild(renderMarkdown(content));
       el.appendChild(textSpan);
-      // Action row below text
       var actions = document.createElement('div');
       actions.className = 'msg-actions';
-      // Copy button
       var msgCopyBtn = document.createElement('button');
       msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
       msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
@@ -509,16 +577,16 @@
         });
       })(content);
       actions.appendChild(msgCopyBtn);
-      // TTS button
       var ttsBtn = document.createElement('button');
       ttsBtn.className = 'msg-action-btn msg-tts-btn';
       ttsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
       ttsBtn.title = 'Read aloud';
-      var msgText = content;
-      ttsBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        toggleTTS(msgText, ttsBtn);
-      });
+      (function(msgText, btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          toggleTTS(msgText, btn);
+        });
+      })(content, ttsBtn);
       actions.appendChild(ttsBtn);
       el.appendChild(actions);
       if (!animate) el.style.animation = 'none';
@@ -622,7 +690,11 @@
   function scrollToBottom(force) {
     if (force || isUserNearBottom) {
       requestAnimationFrame(function() {
-        chatFeed.scrollTop = chatFeed.scrollHeight;
+        if (force && lastMessageCount === 0) {
+          chatFeed.scrollTop = chatFeed.scrollHeight;
+        } else {
+          chatFeed.scrollTo({ top: chatFeed.scrollHeight, behavior: 'smooth' });
+        }
       });
       newMsgPill.classList.remove('visible');
     }

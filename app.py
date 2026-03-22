@@ -53,6 +53,7 @@ TOOL_CALL_RE = re.compile(
 # ---------------------------------------------------------------------------
 http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
+death_cache: dict[str, float] = {}
 
 
 @asynccontextmanager
@@ -439,16 +440,34 @@ async def list_sessions():
     for s in sessions:
         name = s["name"]
 
+        # Track death time
         if s["state"] == "dead":
+            if name not in death_cache:
+                death_cache[name] = time.time()
+        elif name in death_cache:
+            del death_cache[name]
+
+        if s["state"] == "dead":
+            preview = ""
+            try:
+                raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-50")
+                msgs = parse_messages(raw)
+                asst = [m for m in msgs if m["role"] == "assistant"]
+                if asst:
+                    preview = asst[-1]["content"][:120]
+            except RuntimeError:
+                pass
+
+            died_at = death_cache.get(name, time.time())
             result.append({
                 "name": name,
                 "pid": s["pid"],
-                "title": name,
+                "title": title_cache.get(name, name),
                 "cwd": s["cwd"],
-                "last_activity": "",
+                "last_activity": time_ago(int(died_at * 1000)),
                 "status": "dead",
                 "state": "dead",
-                "preview": "",
+                "preview": preview,
             })
             continue
 
