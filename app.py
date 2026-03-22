@@ -500,13 +500,7 @@ async def list_sessions():
             raw = ""
 
         messages = parse_messages(raw)
-        title = title_cache.get(name)
-        if not title:
-            # trigger background title generation
-            asyncio.create_task(_refresh_title(name, messages))
-            # use first user message as temporary title
-            user_msgs = [m for m in messages if m["role"] == "user"]
-            title = user_msgs[0]["content"][:50] if user_msgs else name
+        title = title_cache.get(name, name)
 
         # preview: last assistant message
         asst_msgs = [m for m in messages if m["role"] == "assistant"]
