@@ -578,6 +578,79 @@ body {
 }
 
 /* ===== Scrollbar styling ===== */
+/* Dead session card */
+.session-card.dead {
+  opacity: 0.5;
+  border-left: 3px solid var(--red);
+}
+.session-card.dead .session-card-status {
+  background: var(--red);
+  animation: none;
+}
+
+/* Swipe container */
+.session-card-wrapper {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+}
+.session-card-wrapper .session-card {
+  margin-bottom: 0;
+  transition: transform 200ms ease-out;
+  position: relative;
+  z-index: 1;
+}
+.swipe-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: stretch;
+}
+.swipe-action-btn {
+  padding: 0 20px;
+  border: none;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  display: flex;
+  align-items: center;
+}
+.swipe-action-btn.kill { background: var(--red); }
+.swipe-action-btn.dismiss { background: var(--red); }
+
+/* Respawn button on dead cards */
+.respawn-btn {
+  margin-top: 8px;
+  background: rgba(232, 115, 74, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  width: 100%;
+}
+.respawn-btn:active { opacity: 0.7; }
+
+/* Show hidden toggle */
+.show-hidden-toggle {
+  text-align: center;
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.show-hidden-toggle:active { color: var(--text); }
+
+/* ===== Scrollbar styling ===== */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }

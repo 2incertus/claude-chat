@@ -28,6 +28,7 @@
   var sessionCountEl = document.getElementById('sessionCount');
   var emptyStateEl = document.getElementById('emptyState');
   var pullIndicator = document.getElementById('pullIndicator');
+  var showHiddenToggle = document.getElementById('showHiddenToggle');
 
   var backBtn = document.getElementById('backBtn');
   var chatTitle = document.getElementById('chatTitle');
@@ -162,23 +163,59 @@
   }
 
   function renderSessionList(sessions) {
-    // Remove old cards but keep emptyState
-    var cards = sessionListEl.querySelectorAll('.session-card');
-    for (var i = 0; i < cards.length; i++) {
-      sessionListEl.removeChild(cards[i]);
+    // Remove old wrappers and bare cards
+    var oldWrappers = sessionListEl.querySelectorAll('.session-card-wrapper');
+    for (var i = 0; i < oldWrappers.length; i++) {
+      sessionListEl.removeChild(oldWrappers[i]);
+    }
+    var oldCards = sessionListEl.querySelectorAll('.session-card');
+    for (var i = 0; i < oldCards.length; i++) {
+      sessionListEl.removeChild(oldCards[i]);
     }
 
-    sessionCountEl.textContent = String(sessions.length);
+    // Filter hidden
+    var hidden = [];
+    try { hidden = JSON.parse(localStorage.getItem('hidden_sessions') || '[]'); } catch(e) {}
+    var showHidden = showHiddenToggle._showHidden || false;
+    var visibleSessions = showHidden ? sessions : sessions.filter(function(s) {
+      return hidden.indexOf(s.name) === -1;
+    });
+    var hiddenCount = sessions.length - sessions.filter(function(s) { return hidden.indexOf(s.name) === -1; }).length;
 
-    if (sessions.length === 0) {
+    sessionCountEl.textContent = String(visibleSessions.length);
+
+    if (visibleSessions.length === 0) {
       emptyStateEl.style.display = '';
+      showHiddenToggle.style.display = hiddenCount > 0 ? '' : 'none';
       return;
     }
     emptyStateEl.style.display = 'none';
+    showHiddenToggle.style.display = hiddenCount > 0 ? '' : 'none';
+    showHiddenToggle.textContent = showHidden ? 'Hide hidden sessions' : 'Show ' + hiddenCount + ' hidden';
 
-    sessions.forEach(function(s) {
+    visibleSessions.forEach(function(s) {
+      var wrapper = document.createElement('div');
+      wrapper.className = 'session-card-wrapper';
+
+      // Swipe action behind card
+      var actions = document.createElement('div');
+      actions.className = 'swipe-actions';
+      var actionBtn = document.createElement('button');
+      actionBtn.className = 'swipe-action-btn ' + (s.state === 'dead' ? 'dismiss' : 'kill');
+      actionBtn.textContent = s.state === 'dead' ? 'Dismiss' : 'Kill';
+      actionBtn.addEventListener('click', function() {
+        if (s.state === 'dead') {
+          dismissSession(s.name);
+        } else {
+          killSession(s.name);
+        }
+      });
+      actions.appendChild(actionBtn);
+      wrapper.appendChild(actions);
+
+      // Card
       var card = document.createElement('div');
-      card.className = 'session-card';
+      card.className = 'session-card' + (s.state === 'dead' ? ' dead' : '');
       card.setAttribute('data-name', s.name);
 
       var top = document.createElement('div');
@@ -191,14 +228,14 @@
       var meta = document.createElement('div');
       meta.className = 'session-card-meta';
 
-      var time = document.createElement('span');
-      time.className = 'session-card-time';
-      time.textContent = s.last_activity || '';
+      var timeEl = document.createElement('span');
+      timeEl.className = 'session-card-time';
+      timeEl.textContent = s.last_activity || '';
 
       var dot = document.createElement('div');
-      dot.className = 'session-card-status' + (s.status === 'working' ? ' working' : '');
+      dot.className = 'session-card-status' + (s.state === 'dead' ? '' : (s.status === 'working' ? ' working' : ''));
 
-      meta.appendChild(time);
+      meta.appendChild(timeEl);
       meta.appendChild(dot);
       top.appendChild(title);
       top.appendChild(meta);
@@ -211,18 +248,64 @@
         card.appendChild(cwd);
       }
 
-      if (s.preview) {
+      if (s.preview && s.state !== 'dead') {
         var preview = document.createElement('div');
         preview.className = 'session-card-preview';
         preview.textContent = s.preview;
         card.appendChild(preview);
       }
 
-      card.addEventListener('click', function() {
-        showSessionView(s.name);
-      });
+      // Respawn button for dead sessions
+      if (s.state === 'dead') {
+        var respawnBtn = document.createElement('button');
+        respawnBtn.className = 'respawn-btn';
+        respawnBtn.textContent = 'Respawn';
+        respawnBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          respawnSession(s.name);
+        });
+        card.appendChild(respawnBtn);
+      }
 
-      sessionListEl.appendChild(card);
+      // Click to open (only active sessions)
+      if (s.state === 'active') {
+        card.addEventListener('click', function() {
+          showSessionView(s.name);
+        });
+      }
+
+      wrapper.appendChild(card);
+
+      // Swipe gesture
+      var startX = 0, currentX = 0, swiping = false;
+      card.addEventListener('touchstart', function(e) {
+        startX = e.touches[0].clientX;
+        currentX = startX;
+        swiping = true;
+        card.style.transition = 'none';
+      }, { passive: true });
+      card.addEventListener('touchmove', function(e) {
+        if (!swiping) return;
+        currentX = e.touches[0].clientX;
+        var dx = currentX - startX;
+        if (dx < 0) { // swipe left only
+          card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
+        }
+      }, { passive: true });
+      card.addEventListener('touchend', function() {
+        if (!swiping) return;
+        swiping = false;
+        card.style.transition = 'transform 200ms ease-out';
+        var dx = currentX - startX;
+        if (dx < -60) {
+          // Keep open to show action
+          card.style.transform = 'translateX(-80px)';
+        } else {
+          card.style.transform = 'translateX(0)';
+        }
+      }, { passive: true });
+
+      sessionListEl.appendChild(wrapper);
     });
   }
 
@@ -638,6 +721,33 @@
       scrollToBottom(true);
     });
   }
+
+  // ========== Session Management (kill / respawn / dismiss) ==========
+  function killSession(name) {
+    fetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function() { loadSessions(); })
+      .catch(function() { loadSessions(); });
+  }
+
+  function respawnSession(name) {
+    fetch('/api/sessions/' + encodeURIComponent(name) + '/respawn', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function() { loadSessions(); })
+      .catch(function() { loadSessions(); });
+  }
+
+  function dismissSession(name) {
+    fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
+      .then(function() { loadSessions(); })
+      .catch(function() { loadSessions(); });
+  }
+
+  // ========== Show Hidden Toggle ==========
+  showHiddenToggle.addEventListener('click', function() {
+    showHiddenToggle._showHidden = !showHiddenToggle._showHidden;
+    loadSessions();
+  });
 
   // ========== Text Input + Send/Mic Toggle ==========
   function toggleSendMic() {
