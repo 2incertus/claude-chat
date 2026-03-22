@@ -28,6 +28,8 @@ ALLOWED_COMMANDS = {
     "send-keys",
     "display-message",
     "kill-session",
+    "set-option",
+    "respawn-pane",
 }
 
 # ---------------------------------------------------------------------------
@@ -101,7 +103,7 @@ def discover_sessions() -> list[dict]:
     try:
         raw = run_tmux(
             "list-panes", "-a",
-            "-F", "#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}"
+            "-F", "#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_dead}"
         )
     except RuntimeError:
         return []
@@ -109,14 +111,15 @@ def discover_sessions() -> list[dict]:
     sessions = []
     for line in raw.splitlines():
         parts = line.split("\t")
-        if len(parts) < 4:
+        if len(parts) < 5:
             continue
-        sname, pid_str, cmd, cwd = parts[0], parts[1], parts[2], parts[3]
+        sname, pid_str, cmd, cwd, pane_dead = parts[0], parts[1], parts[2], parts[3], parts[4]
         # Skip names starting with '-' -- they break tmux -t flag parsing
         if sname.startswith("-"):
             continue
 
-        state = "active" if cmd == "claude" else "dead"
+        # Active only if claude is running AND pane is alive
+        state = "active" if (cmd == "claude" and pane_dead != "1") else "dead"
 
         meta: dict = {}
         if state == "active":
@@ -537,29 +540,30 @@ async def send_to_session(name: str, body: SendBody):
 
 @app.post("/api/sessions/{name}/kill")
 async def kill_session_endpoint(name: str):
-    """Kill Claude in the tmux pane. Tmux session stays alive for respawn."""
+    """Kill Claude in the tmux pane. Pane stays alive for respawn."""
     validate_session_name(name)
     if not _session_exists(name):
         raise HTTPException(status_code=404, detail="Session not found")
     if not _is_claude_session(name):
         return {"killed": True, "state": "dead"}
 
-    # Escape any menus/prompts, then Ctrl+C to cancel, then /exit
+    # CRITICAL: set remain-on-exit so pane survives after Claude exits
+    run_tmux("set-option", "-t", name, "remain-on-exit", "on")
+
+    # Escape any menus, Ctrl+C to cancel, then /exit
     run_tmux("send-keys", "-t", name, "Escape")
     await asyncio.sleep(0.2)
     run_tmux("send-keys", "-t", name, "C-c")
     await asyncio.sleep(1)
     run_tmux("send-keys", "-t", name, "C-c")
     await asyncio.sleep(0.5)
-    # Clear any partial input and send /exit
-    run_tmux("send-keys", "-t", name, "C-u")  # clear line
+    run_tmux("send-keys", "-t", name, "C-u")
     run_tmux("send-keys", "-t", name, "-l", "/exit")
     run_tmux("send-keys", "-t", name, "Enter")
     await asyncio.sleep(2)
 
     still_active = _is_claude_session(name)
     if still_active:
-        # Last resort: Ctrl+D (EOF)
         run_tmux("send-keys", "-t", name, "C-d")
         await asyncio.sleep(1)
         still_active = _is_claude_session(name)
@@ -576,8 +580,9 @@ async def respawn_session(name: str):
         raise HTTPException(status_code=404, detail="Session not found")
     if _is_claude_session(name):
         return {"respawned": False, "message": "Session already has Claude running"}
-    run_tmux("send-keys", "-t", name, "-l", "claude --continue")
-    run_tmux("send-keys", "-t", name, "Enter")
+
+    # respawn-pane with full path (respawn-pane uses a bare shell without user PATH)
+    run_tmux("respawn-pane", "-t", name, "-k", "/home/ubuntu/.local/bin/claude --continue")
     return {"respawned": True}
 
 
