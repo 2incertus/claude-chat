@@ -51,6 +51,9 @@
   var fileInput = document.getElementById('fileInput');
   var uploadToast = document.getElementById('uploadToast');
   var bellBtn = document.getElementById('bellBtn');
+  var gearBtn = document.getElementById('gearBtn');
+  var settingsBackdrop = document.getElementById('settingsBackdrop');
+  var settingsPanel = document.getElementById('settingsPanel');
 
   // ========== Clipboard Helpers ==========
   function fallbackCopy(text) {
@@ -140,6 +143,7 @@
 
     loadSession(name);
     startPolling();
+    updatePillPosition();
   }
 
   backBtn.addEventListener('click', function() { showSessionList(); });
@@ -667,10 +671,11 @@
 
   function schedulePoll() {
     if (!currentSession) return;
+    var speeds = POLL_SPEEDS[pollSpeedSetting] || POLL_SPEEDS.normal;
     var interval;
-    if (idleCount < 3) interval = 2000;
-    else if (idleCount < 6) interval = 5000;
-    else interval = 10000;
+    if (idleCount < 3) interval = speeds.active;
+    else if (idleCount < 6) interval = speeds.warm;
+    else interval = speeds.idle;
     pollTimer = setTimeout(doPoll, interval);
   }
 
@@ -706,6 +711,13 @@
         }
       });
       newMsgPill.classList.remove('visible');
+    }
+  }
+
+  function updatePillPosition() {
+    var area = document.getElementById('inputArea');
+    if (area) {
+      newMsgPill.style.bottom = (area.offsetHeight + 20) + 'px';
     }
   }
 
@@ -992,7 +1004,9 @@
   function isNtfyEnabled(session) {
     try {
       var s = JSON.parse(localStorage.getItem('ntfy_sessions') || '{}');
-      return !!s[session];
+      if (session in s) return !!s[session];
+      var settings = getSettings();
+      return !!settings.defaultNtfy;
     } catch(e) { return false; }
   }
 
@@ -1198,7 +1212,126 @@
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   }
 
+  // ========== Settings ==========
+  var POLL_SPEEDS = {
+    fast:   { active: 1000, warm: 3000, idle: 5000 },
+    normal: { active: 2000, warm: 5000, idle: 10000 },
+    saver:  { active: 5000, warm: 15000, idle: 15000 }
+  };
+  var pollSpeedSetting = 'normal';
+
+  function getSettings() {
+    try { return JSON.parse(localStorage.getItem('claude_chat_settings') || '{}'); } catch(e) { return {}; }
+  }
+
+  function saveSetting(key, value) {
+    var s = getSettings();
+    s[key] = value;
+    localStorage.setItem('claude_chat_settings', JSON.stringify(s));
+    applySetting(key, value);
+  }
+
+  function applySetting(key, value) {
+    if (key === 'theme') {
+      if (value && value !== 'dark') {
+        document.documentElement.setAttribute('data-theme', value);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    } else if (key === 'pollSpeed') {
+      pollSpeedSetting = value || 'normal';
+    } else if (key === 'chatVoice') {
+      localStorage.setItem('chatVoice', value || '');
+    }
+  }
+
+  function loadSettings() {
+    var s = getSettings();
+    if (s.theme) applySetting('theme', s.theme);
+    if (s.pollSpeed) applySetting('pollSpeed', s.pollSpeed);
+    if (s.chatVoice) applySetting('chatVoice', s.chatVoice);
+  }
+
+  function openSettings() {
+    renderSettingsPanel();
+    settingsBackdrop.classList.add('visible');
+    settingsPanel.classList.add('visible');
+  }
+
+  function closeSettings() {
+    settingsBackdrop.classList.remove('visible');
+    settingsPanel.classList.remove('visible');
+  }
+
+  function renderSettingsPanel() {
+    var existing = settingsPanel.querySelectorAll('.settings-row');
+    for (var i = 0; i < existing.length; i++) existing[i].remove();
+    var s = getSettings();
+
+    var themeRow = createSettingsRow('Theme', 'select', s.theme || 'dark', [
+      { value: 'dark', label: 'Dark' },
+      { value: 'oled', label: 'OLED Black' },
+      { value: 'light', label: 'Light' }
+    ], function(v) { saveSetting('theme', v); });
+    settingsPanel.appendChild(themeRow);
+
+    var pollRow = createSettingsRow('Poll Speed', 'select', s.pollSpeed || 'normal', [
+      { value: 'fast', label: 'Fast' },
+      { value: 'normal', label: 'Normal' },
+      { value: 'saver', label: 'Battery Saver' }
+    ], function(v) { saveSetting('pollSpeed', v); });
+    settingsPanel.appendChild(pollRow);
+
+    var voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    var voiceOptions = [{ value: '', label: 'System Default' }];
+    for (var vi = 0; vi < voices.length; vi++) {
+      voiceOptions.push({ value: voices[vi].name, label: voices[vi].name });
+    }
+    var voiceRow = createSettingsRow('TTS Voice', 'select', s.chatVoice || '', voiceOptions, function(v) { saveSetting('chatVoice', v); });
+    settingsPanel.appendChild(voiceRow);
+
+    var ntfyRow = createSettingsRow('Default Notifications', 'toggle', !!s.defaultNtfy, null, function(v) { saveSetting('defaultNtfy', v); });
+    settingsPanel.appendChild(ntfyRow);
+  }
+
+  function createSettingsRow(label, type, currentValue, options, onChange) {
+    var row = document.createElement('div');
+    row.className = 'settings-row';
+    var lbl = document.createElement('span');
+    lbl.className = 'settings-label';
+    lbl.textContent = label;
+    row.appendChild(lbl);
+
+    if (type === 'select') {
+      var sel = document.createElement('select');
+      sel.className = 'settings-select';
+      for (var i = 0; i < options.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = options[i].value;
+        opt.textContent = options[i].label;
+        if (options[i].value === currentValue) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener('change', function() { onChange(sel.value); });
+      row.appendChild(sel);
+    } else if (type === 'toggle') {
+      var tog = document.createElement('div');
+      tog.className = 'settings-toggle' + (currentValue ? ' on' : '');
+      tog.addEventListener('click', function() {
+        var isOn = tog.classList.toggle('on');
+        onChange(isOn);
+      });
+      row.appendChild(tog);
+    }
+    return row;
+  }
+
+  gearBtn.addEventListener('click', openSettings);
+  settingsBackdrop.addEventListener('click', closeSettings);
+
   // ========== Init ==========
+  window.addEventListener('resize', updatePillPosition);
+  loadSettings();
   loadSessions();
   startSessionListPolling();
 
