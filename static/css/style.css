@@ -17,6 +17,11 @@
   --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
   --border: rgba(255,255,255,0.06);
   --border-medium: rgba(255,255,255,0.1);
+  --overlay-hover: rgba(255,255,255,0.08);
+  --overlay-active: rgba(255,255,255,0.15);
+  --spinner-border: rgba(255,255,255,0.2);
+  --cmd-pill-bg: rgba(255,255,255,0.12);
+  --toast-success-text: #FFFFFF;
 }
 :root[data-theme="oled"] {
   --bg: #000000;
@@ -33,6 +38,11 @@
   --code-bg: #F5F3F0;
   --border: rgba(0,0,0,0.08);
   --border-medium: rgba(0,0,0,0.12);
+  --overlay-hover: rgba(0,0,0,0.05);
+  --overlay-active: rgba(0,0,0,0.1);
+  --spinner-border: rgba(0,0,0,0.15);
+  --cmd-pill-bg: rgba(0,0,0,0.08);
+  --toast-success-text: #1A1A1A;
 }
 html, body { height: 100%; overflow: hidden; }
 body {
@@ -351,7 +361,7 @@ body {
   font-family: var(--mono);
   font-size: 13px;
   line-height: 1.5;
-  border: 1px solid rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 10px 12px;
   margin: 6px 0;
@@ -382,7 +392,7 @@ body {
   transition: color 150ms, background 150ms;
 }
 .msg-action-btn:active {
-  background: rgba(255,255,255,0.08);
+  background: var(--overlay-hover);
   color: var(--text-dim);
 }
 .msg-action-btn.playing {
@@ -392,7 +402,7 @@ body {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(255,255,255,0.05);
+  background: var(--overlay-hover);
   border: none;
   color: var(--text-dim);
   cursor: pointer;
@@ -408,7 +418,7 @@ body {
   opacity: 1;
 }
 .code-copy-btn:active {
-  background: rgba(255,255,255,0.15);
+  background: var(--overlay-active);
 }
 @media (hover: none) {
   .code-copy-btn {
@@ -522,7 +532,7 @@ body {
 .preview-send:active { opacity: 0.85; }
 .preview-cancel {
   background: none;
-  border: 1px solid rgba(255,255,255,0.15);
+  border: 1px solid var(--border-medium);
   color: var(--text-dim);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
@@ -714,7 +724,7 @@ body {
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255,255,255,0.2);
+  border: 2px solid var(--spinner-border);
   border-top-color: currentColor;
   border-radius: 50%;
   animation: btnSpin 0.5s linear infinite;
@@ -730,7 +740,7 @@ body {
   opacity: 0.6;
   color: var(--text-dim);
   border-color: var(--border-medium);
-  background: rgba(255,255,255,0.04);
+  background: var(--overlay-hover);
 }
 .session-card.processing {
   opacity: 0.35;
@@ -769,7 +779,7 @@ body {
 }
 .action-toast.success {
   background: var(--green);
-  color: #0A0A0A;
+  color: var(--toast-success-text);
   font-weight: 600;
 }
 .action-toast.error {
@@ -909,7 +919,7 @@ body {
   display: inline;
   font-family: var(--mono);
   font-weight: 600;
-  background: rgba(0,0,0,0.2);
+  background: var(--cmd-pill-bg);
   padding: 1px 7px;
   border-radius: 8px;
   font-size: 0.85em;
