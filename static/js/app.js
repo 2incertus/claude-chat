@@ -12,6 +12,7 @@
   var ttsPlayingBtn = null;
   var sessionListTimer = null;
   var pendingMessages = []; // optimistic messages awaiting server confirmation
+  var sessionScrollPositions = {};
 
   // Voice state
   var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -92,6 +93,9 @@
       delete sessionDrafts[currentSession];
     }
     textInput.value = '';
+    if (currentSession) {
+      sessionScrollPositions[currentSession] = chatFeed.scrollTop;
+    }
     currentSession = null;
     contentHash = '';
     idleCount = 0;
@@ -370,7 +374,12 @@
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
-        scrollToBottom(true);
+        var savedPos = sessionScrollPositions[name];
+        if (savedPos !== undefined) {
+          chatFeed.scrollTop = savedPos;
+        } else {
+          scrollToBottom(true);
+        }
       })
       .catch(function() {
         chatTitle.textContent = 'Session unavailable';

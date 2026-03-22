@@ -457,7 +457,7 @@ body {
 /* New messages pill */
 .new-msg-pill {
   position: absolute;
-  bottom: 160px;
+  bottom: 80px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--accent);
@@ -495,7 +495,7 @@ body {
   flex: 1;
   background: var(--surface2);
   color: var(--text);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--border-medium);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   font-size: 0.85rem;
@@ -553,7 +553,7 @@ body {
   flex: 1;
   background: var(--surface2);
   color: var(--text);
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid var(--border-medium);
   border-radius: 20px;
   padding: 10px 16px;
   font-size: 0.9rem;
@@ -725,7 +725,7 @@ body {
   pointer-events: none;
   opacity: 0.6;
   color: var(--text-dim);
-  border-color: rgba(255,255,255,0.1);
+  border-color: var(--border-medium);
   background: rgba(255,255,255,0.04);
 }
 .session-card.processing {
@@ -792,4 +792,4 @@ body {
 /* ===== Scrollbar styling ===== */
 ::-webkit-scrollbar { width: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 2px; }
