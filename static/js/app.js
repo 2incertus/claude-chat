@@ -12,6 +12,7 @@
   var ttsPlayingBtn = null;
   var sessionListTimer = null;
   var pendingMessages = []; // optimistic messages awaiting server confirmation
+  var sessionScrollPositions = {};
 
   // Voice state
   var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -50,6 +51,9 @@
   var fileInput = document.getElementById('fileInput');
   var uploadToast = document.getElementById('uploadToast');
   var bellBtn = document.getElementById('bellBtn');
+  var gearBtn = document.getElementById('gearBtn');
+  var settingsBackdrop = document.getElementById('settingsBackdrop');
+  var settingsPanel = document.getElementById('settingsPanel');
 
   // ========== Clipboard Helpers ==========
   function fallbackCopy(text) {
@@ -92,6 +96,9 @@
       delete sessionDrafts[currentSession];
     }
     textInput.value = '';
+    if (currentSession) {
+      sessionScrollPositions[currentSession] = chatFeed.scrollTop;
+    }
     currentSession = null;
     contentHash = '';
     idleCount = 0;
@@ -136,6 +143,7 @@
 
     loadSession(name);
     startPolling();
+    updatePillPosition();
   }
 
   backBtn.addEventListener('click', function() { showSessionList(); });
@@ -244,6 +252,12 @@
 
       meta.appendChild(timeEl);
       meta.appendChild(dot);
+      if (s.state === 'dead') {
+        var deadLabel = document.createElement('span');
+        deadLabel.className = 'session-card-dead-label';
+        deadLabel.textContent = 'EXITED';
+        meta.appendChild(deadLabel);
+      }
       top.appendChild(title);
       top.appendChild(meta);
       card.appendChild(top);
@@ -255,7 +269,7 @@
         card.appendChild(cwd);
       }
 
-      if (s.preview && s.state !== 'dead') {
+      if (s.preview) {
         var preview = document.createElement('div');
         preview.className = 'session-card-preview';
         preview.textContent = s.preview;
@@ -364,7 +378,12 @@
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
-        scrollToBottom(true);
+        var savedPos = sessionScrollPositions[name];
+        if (savedPos !== undefined) {
+          chatFeed.scrollTop = savedPos;
+        } else {
+          scrollToBottom(true);
+        }
       })
       .catch(function() {
         chatTitle.textContent = 'Session unavailable';
@@ -416,6 +435,133 @@
     });
   }
 
+  // ========== Markdown Renderer ==========
+  function renderMarkdown(text) {
+    var frag = document.createDocumentFragment();
+    // Escape HTML entities first (security)
+    text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Split into blocks, preserving fenced code blocks
+    var blocks = [];
+    var lines = text.split('\n');
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^```/.test(line)) {
+        var lang = line.replace(/^```\s*/, '').trim();
+        var codeLines = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) {
+          codeLines.push(lines[i]);
+          i++;
+        }
+        i++;
+        blocks.push({ type: 'code', content: codeLines.join('\n'), lang: lang });
+        continue;
+      }
+      if (!line.trim()) { i++; continue; }
+      var group = [];
+      while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i])) {
+        group.push(lines[i]);
+        i++;
+      }
+      blocks.push({ type: 'lines', lines: group });
+    }
+    for (var b = 0; b < blocks.length; b++) {
+      var block = blocks[b];
+      if (block.type === 'code') {
+        var pre = document.createElement('pre');
+        pre.className = 'code-block';
+        var code = document.createElement('code');
+        code.textContent = block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        pre.appendChild(code);
+        var copyBtn = document.createElement('button');
+        copyBtn.className = 'code-copy-btn';
+        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+        copyBtn.title = 'Copy code';
+        (function(codeText) {
+          copyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyToClipboard(codeText);
+          });
+        })(block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
+        pre.appendChild(copyBtn);
+        frag.appendChild(pre);
+        continue;
+      }
+      var groupLines = block.lines;
+      var li = 0;
+      while (li < groupLines.length) {
+        var gl = groupLines[li];
+        var headerMatch = gl.match(/^(#{1,3})\s+(.+)/);
+        if (headerMatch) {
+          var level = headerMatch[1].length;
+          var h = document.createElement('h' + level);
+          h.appendChild(applyInline(headerMatch[2]));
+          frag.appendChild(h);
+          li++;
+          continue;
+        }
+        if (/^[-*]{3,}\s*$/.test(gl) && !/\S/.test(gl.replace(/[-*]/g, ''))) {
+          frag.appendChild(document.createElement('hr'));
+          li++;
+          continue;
+        }
+        if (/^[\-*]\s+/.test(gl)) {
+          var ul = document.createElement('ul');
+          while (li < groupLines.length && /^[\-*]\s+/.test(groupLines[li])) {
+            var liEl = document.createElement('li');
+            liEl.appendChild(applyInline(groupLines[li].replace(/^[\-*]\s+/, '')));
+            ul.appendChild(liEl);
+            li++;
+          }
+          frag.appendChild(ul);
+          continue;
+        }
+        if (/^\d+\.\s+/.test(gl)) {
+          var ol = document.createElement('ol');
+          while (li < groupLines.length && /^\d+\.\s+/.test(groupLines[li])) {
+            var liEl = document.createElement('li');
+            liEl.appendChild(applyInline(groupLines[li].replace(/^\d+\.\s+/, '')));
+            ol.appendChild(liEl);
+            li++;
+          }
+          frag.appendChild(ol);
+          continue;
+        }
+        var pLines = [];
+        while (li < groupLines.length &&
+               !groupLines[li].match(/^#{1,3}\s+/) &&
+               !/^[-*]{3,}\s*$/.test(groupLines[li]) &&
+               !/^[\-*]\s+/.test(groupLines[li]) &&
+               !/^\d+\.\s+/.test(groupLines[li])) {
+          pLines.push(groupLines[li]);
+          li++;
+        }
+        if (pLines.length > 0) {
+          var p = document.createElement('p');
+          p.appendChild(applyInline(pLines.join(' ')));
+          frag.appendChild(p);
+        }
+      }
+    }
+    return frag;
+  }
+
+  function applyInline(text) {
+    var frag = document.createDocumentFragment();
+    var html = text
+      .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    var span = document.createElement('span');
+    span.innerHTML = html;
+    while (span.firstChild) {
+      frag.appendChild(span.firstChild);
+    }
+    return frag;
+  }
+
   function appendMessage(m, animate) {
     var el;
     if (m.role === 'user') {
@@ -429,75 +575,10 @@
       var textSpan = document.createElement('div');
       textSpan.className = 'msg-assistant-text';
       var content = m.content || m.text || '';
-      // Code block detection: split into code vs prose
-      var lines = content.split('\n');
-      var codeBuf = [];
-      var inCode = false;
-      var codeRe = new RegExp('^(\\s{4,}\\S|\\s*\\d+[\u2192|:]\\s)');
-      for (var li = 0; li < lines.length; li++) {
-        var isCode = codeRe.test(lines[li]);
-        if (isCode) {
-          if (!inCode && codeBuf.length === 0) {
-            // flush any preceding text
-          }
-          inCode = true;
-          codeBuf.push(lines[li]);
-        } else {
-          if (inCode && codeBuf.length >= 2) {
-            var pre = document.createElement('pre');
-            pre.className = 'code-block';
-            var code = document.createElement('code');
-            code.textContent = codeBuf.join('\n');
-            pre.appendChild(code);
-            var copyBtn = document.createElement('button');
-            copyBtn.className = 'code-copy-btn';
-            copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-            copyBtn.title = 'Copy code';
-            (function(codeText) {
-              copyBtn.addEventListener('click', function(e) {
-                e.stopPropagation();
-                copyToClipboard(codeText);
-              });
-            })(codeBuf.join('\n'));
-            pre.appendChild(copyBtn);
-            textSpan.appendChild(pre);
-            codeBuf = [];
-            inCode = false;
-          } else if (inCode) {
-            // Too few code lines, treat as text
-            textSpan.appendChild(document.createTextNode(codeBuf.join('\n') + '\n'));
-            codeBuf = [];
-            inCode = false;
-          }
-          textSpan.appendChild(document.createTextNode(lines[li] + (li < lines.length - 1 ? '\n' : '')));
-        }
-      }
-      if (inCode && codeBuf.length >= 2) {
-        var pre = document.createElement('pre');
-        pre.className = 'code-block';
-        var code = document.createElement('code');
-        code.textContent = codeBuf.join('\n');
-        pre.appendChild(code);
-        var copyBtn = document.createElement('button');
-        copyBtn.className = 'code-copy-btn';
-        copyBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-        copyBtn.title = 'Copy code';
-        (function(codeText) {
-          copyBtn.addEventListener('click', function(e) {
-            e.stopPropagation();
-            copyToClipboard(codeText);
-          });
-        })(codeBuf.join('\n'));
-        pre.appendChild(copyBtn);
-        textSpan.appendChild(pre);
-      } else if (codeBuf.length > 0) {
-        textSpan.appendChild(document.createTextNode(codeBuf.join('\n')));
-      }
+      textSpan.appendChild(renderMarkdown(content));
       el.appendChild(textSpan);
-      // Action row below text
       var actions = document.createElement('div');
       actions.className = 'msg-actions';
-      // Copy button
       var msgCopyBtn = document.createElement('button');
       msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
       msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
@@ -509,16 +590,16 @@
         });
       })(content);
       actions.appendChild(msgCopyBtn);
-      // TTS button
       var ttsBtn = document.createElement('button');
       ttsBtn.className = 'msg-action-btn msg-tts-btn';
       ttsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
       ttsBtn.title = 'Read aloud';
-      var msgText = content;
-      ttsBtn.addEventListener('click', function(e) {
-        e.stopPropagation();
-        toggleTTS(msgText, ttsBtn);
-      });
+      (function(msgText, btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          toggleTTS(msgText, btn);
+        });
+      })(content, ttsBtn);
       actions.appendChild(ttsBtn);
       el.appendChild(actions);
       if (!animate) el.style.animation = 'none';
@@ -590,10 +671,11 @@
 
   function schedulePoll() {
     if (!currentSession) return;
+    var speeds = POLL_SPEEDS[pollSpeedSetting] || POLL_SPEEDS.normal;
     var interval;
-    if (idleCount < 3) interval = 2000;
-    else if (idleCount < 6) interval = 5000;
-    else interval = 10000;
+    if (idleCount < 3) interval = speeds.active;
+    else if (idleCount < 6) interval = speeds.warm;
+    else interval = speeds.idle;
     pollTimer = setTimeout(doPoll, interval);
   }
 
@@ -622,9 +704,20 @@
   function scrollToBottom(force) {
     if (force || isUserNearBottom) {
       requestAnimationFrame(function() {
-        chatFeed.scrollTop = chatFeed.scrollHeight;
+        if (force && lastMessageCount === 0) {
+          chatFeed.scrollTop = chatFeed.scrollHeight;
+        } else {
+          chatFeed.scrollTo({ top: chatFeed.scrollHeight, behavior: 'smooth' });
+        }
       });
       newMsgPill.classList.remove('visible');
+    }
+  }
+
+  function updatePillPosition() {
+    var area = document.getElementById('inputArea');
+    if (area) {
+      newMsgPill.style.bottom = (area.offsetHeight + 20) + 'px';
     }
   }
 
@@ -911,7 +1004,9 @@
   function isNtfyEnabled(session) {
     try {
       var s = JSON.parse(localStorage.getItem('ntfy_sessions') || '{}');
-      return !!s[session];
+      if (session in s) return !!s[session];
+      var settings = getSettings();
+      return !!settings.defaultNtfy;
     } catch(e) { return false; }
   }
 
@@ -1117,7 +1212,126 @@
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   }
 
+  // ========== Settings ==========
+  var POLL_SPEEDS = {
+    fast:   { active: 1000, warm: 3000, idle: 5000 },
+    normal: { active: 2000, warm: 5000, idle: 10000 },
+    saver:  { active: 5000, warm: 15000, idle: 15000 }
+  };
+  var pollSpeedSetting = 'normal';
+
+  function getSettings() {
+    try { return JSON.parse(localStorage.getItem('claude_chat_settings') || '{}'); } catch(e) { return {}; }
+  }
+
+  function saveSetting(key, value) {
+    var s = getSettings();
+    s[key] = value;
+    localStorage.setItem('claude_chat_settings', JSON.stringify(s));
+    applySetting(key, value);
+  }
+
+  function applySetting(key, value) {
+    if (key === 'theme') {
+      if (value && value !== 'dark') {
+        document.documentElement.setAttribute('data-theme', value);
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+    } else if (key === 'pollSpeed') {
+      pollSpeedSetting = value || 'normal';
+    } else if (key === 'chatVoice') {
+      localStorage.setItem('chatVoice', value || '');
+    }
+  }
+
+  function loadSettings() {
+    var s = getSettings();
+    if (s.theme) applySetting('theme', s.theme);
+    if (s.pollSpeed) applySetting('pollSpeed', s.pollSpeed);
+    if (s.chatVoice) applySetting('chatVoice', s.chatVoice);
+  }
+
+  function openSettings() {
+    renderSettingsPanel();
+    settingsBackdrop.classList.add('visible');
+    settingsPanel.classList.add('visible');
+  }
+
+  function closeSettings() {
+    settingsBackdrop.classList.remove('visible');
+    settingsPanel.classList.remove('visible');
+  }
+
+  function renderSettingsPanel() {
+    var existing = settingsPanel.querySelectorAll('.settings-row');
+    for (var i = 0; i < existing.length; i++) existing[i].remove();
+    var s = getSettings();
+
+    var themeRow = createSettingsRow('Theme', 'select', s.theme || 'dark', [
+      { value: 'dark', label: 'Dark' },
+      { value: 'oled', label: 'OLED Black' },
+      { value: 'light', label: 'Light' }
+    ], function(v) { saveSetting('theme', v); });
+    settingsPanel.appendChild(themeRow);
+
+    var pollRow = createSettingsRow('Poll Speed', 'select', s.pollSpeed || 'normal', [
+      { value: 'fast', label: 'Fast' },
+      { value: 'normal', label: 'Normal' },
+      { value: 'saver', label: 'Battery Saver' }
+    ], function(v) { saveSetting('pollSpeed', v); });
+    settingsPanel.appendChild(pollRow);
+
+    var voices = window.speechSynthesis ? speechSynthesis.getVoices() : [];
+    var voiceOptions = [{ value: '', label: 'System Default' }];
+    for (var vi = 0; vi < voices.length; vi++) {
+      voiceOptions.push({ value: voices[vi].name, label: voices[vi].name });
+    }
+    var voiceRow = createSettingsRow('TTS Voice', 'select', s.chatVoice || '', voiceOptions, function(v) { saveSetting('chatVoice', v); });
+    settingsPanel.appendChild(voiceRow);
+
+    var ntfyRow = createSettingsRow('Default Notifications', 'toggle', !!s.defaultNtfy, null, function(v) { saveSetting('defaultNtfy', v); });
+    settingsPanel.appendChild(ntfyRow);
+  }
+
+  function createSettingsRow(label, type, currentValue, options, onChange) {
+    var row = document.createElement('div');
+    row.className = 'settings-row';
+    var lbl = document.createElement('span');
+    lbl.className = 'settings-label';
+    lbl.textContent = label;
+    row.appendChild(lbl);
+
+    if (type === 'select') {
+      var sel = document.createElement('select');
+      sel.className = 'settings-select';
+      for (var i = 0; i < options.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = options[i].value;
+        opt.textContent = options[i].label;
+        if (options[i].value === currentValue) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      sel.addEventListener('change', function() { onChange(sel.value); });
+      row.appendChild(sel);
+    } else if (type === 'toggle') {
+      var tog = document.createElement('div');
+      tog.className = 'settings-toggle' + (currentValue ? ' on' : '');
+      tog.addEventListener('click', function() {
+        var isOn = tog.classList.toggle('on');
+        onChange(isOn);
+      });
+      row.appendChild(tog);
+    }
+    return row;
+  }
+
+  gearBtn.addEventListener('click', openSettings);
+  settingsBackdrop.addEventListener('click', closeSettings);
+
   // ========== Init ==========
+  window.addEventListener('resize', updatePillPosition);
+  loadSettings();
   loadSessions();
   startSessionListPolling();
 
