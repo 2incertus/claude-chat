@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#0A0A0A">
   <link rel="manifest" href="/manifest.json">
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/style.css?v=2">
 </head>
 <body>
 <div class="app-shell">
@@ -20,6 +20,7 @@
       <span class="header-badge" id="sessionCount">0</span>
       <div class="header-spacer"></div>
       <button class="gear-btn" id="gearBtn" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
+      <button class="new-btn" id="newBtn" title="New session">+</button>
     </div>
     <div class="pull-indicator" id="pullIndicator">Pull to refresh</div>
     <div class="session-list" id="sessionList">
@@ -52,9 +53,11 @@
       <button class="preview-send" id="previewSend">Send</button>
       <button class="preview-cancel" id="previewCancel">Cancel</button>
     </div>
+    <div class="cmd-palette" id="cmdPalette"></div>
     <div class="input-area" id="inputArea">
       <div class="text-input-row">
         <button class="attach-btn" id="attachBtn" title="Attach file"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
+        <button class="cmd-btn" id="cmdBtn" title="Commands">/</button>
         <textarea class="text-input" id="textInput" rows="1" placeholder="Message..."></textarea>
         <button class="mic-inline-btn" id="micBtn" title="Voice input"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V5a3 3 0 00-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 0014 0h-2zm-4 7.93A7 7 0 0019 12h-2a5 5 0 01-10 0H5a7 7 0 006 6.93V22h2v-3.07z"/></svg></button>
         <button class="send-inline-btn" id="sendBtn" title="Send" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
@@ -74,6 +77,18 @@
   <h3 class="settings-title">Settings</h3>
 </div>
 
-<script src="/static/js/app.js"></script>
+<!-- New session panel (outside app-shell) -->
+<div class="new-session-backdrop" id="newSessionBackdrop"></div>
+<div class="new-session-panel" id="newSessionPanel">
+  <div class="settings-handle"></div>
+  <h3 class="settings-title">New Session</h3>
+  <div id="presetList"></div>
+  <div style="margin-top:12px;display:flex;gap:8px;">
+    <input type="text" id="customPath" placeholder="Custom path..." style="flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border-medium);border-radius:8px;padding:8px 12px;font-size:0.85rem;font-family:inherit;outline:none;">
+    <button id="customLaunch" style="background:var(--accent);color:white;border:none;border-radius:8px;padding:8px 16px;font-size:0.85rem;font-weight:600;cursor:pointer;touch-action:manipulation;">Launch</button>
+  </div>
+</div>
+
+<script src="/static/js/app.js?v=2"></script>
 </body>
 </html>

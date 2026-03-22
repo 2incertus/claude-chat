@@ -54,6 +54,15 @@
   var gearBtn = document.getElementById('gearBtn');
   var settingsBackdrop = document.getElementById('settingsBackdrop');
   var settingsPanel = document.getElementById('settingsPanel');
+  var cmdBtn = document.getElementById('cmdBtn');
+  var cmdPalette = document.getElementById('cmdPalette');
+  var commandList = [];
+  var newBtn = document.getElementById('newBtn');
+  var newSessionBackdrop = document.getElementById('newSessionBackdrop');
+  var newSessionPanel = document.getElementById('newSessionPanel');
+  var presetList = document.getElementById('presetList');
+  var customPath = document.getElementById('customPath');
+  var customLaunch = document.getElementById('customLaunch');
 
   // ========== Clipboard Helpers ==========
   function fallbackCopy(text) {
@@ -582,39 +591,107 @@
       }
       if (!animate) el.style.animation = 'none';
     } else if (m.role === 'assistant') {
-      el = document.createElement('div');
-      el.className = 'msg msg-assistant';
-      var textSpan = document.createElement('div');
-      textSpan.className = 'msg-assistant-text';
+      // Check if preceding user message was a slash command
+      var isCommandResult = false;
+      var commandName = '';
+      if (allMsgs && msgIdx > 0) {
+        for (var pi = msgIdx - 1; pi >= 0; pi--) {
+          if (allMsgs[pi].role === 'tool') continue;
+          if (allMsgs[pi].role === 'user') {
+            var uc = (allMsgs[pi].content || allMsgs[pi].text || '').trim();
+            if (uc.startsWith('/')) {
+              isCommandResult = true;
+              var si = uc.indexOf(' ');
+              commandName = si > 0 ? uc.substring(0, si) : uc;
+              // Only first assistant message after command gets card
+              var alreadyHandled = false;
+              for (var ci = pi + 1; ci < msgIdx; ci++) {
+                if (allMsgs[ci].role === 'assistant') { alreadyHandled = true; break; }
+                if (allMsgs[ci].role === 'user') break;
+              }
+              if (alreadyHandled) isCommandResult = false;
+            }
+          }
+          break;
+        }
+      }
+
       var content = m.content || m.text || '';
-      textSpan.appendChild(renderMarkdown(content));
-      el.appendChild(textSpan);
-      var actions = document.createElement('div');
-      actions.className = 'msg-actions';
-      var msgCopyBtn = document.createElement('button');
-      msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
-      msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
-      msgCopyBtn.title = 'Copy message';
-      (function(msgContent) {
-        msgCopyBtn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          copyToClipboard(msgContent);
+
+      if (isCommandResult) {
+        el = document.createElement('div');
+        el.className = 'cmd-result-card';
+        var header = document.createElement('div');
+        header.className = 'cmd-result-header';
+        var hName = document.createElement('span');
+        hName.className = 'cmd-result-name';
+        hName.textContent = commandName;
+        var hStatus = document.createElement('span');
+        hStatus.className = 'cmd-result-status';
+        hStatus.textContent = 'completed';
+        var hToggle = document.createElement('span');
+        hToggle.className = 'cmd-result-toggle';
+        hToggle.textContent = '\u25BC';
+        header.appendChild(hName);
+        header.appendChild(hStatus);
+        header.appendChild(hToggle);
+        var body = document.createElement('div');
+        body.className = 'cmd-result-body';
+        var textSpan = document.createElement('div');
+        textSpan.className = 'msg-assistant-text';
+        textSpan.appendChild(renderMarkdown(content));
+        body.appendChild(textSpan);
+        var actions = document.createElement('div');
+        actions.className = 'msg-actions';
+        actions.style.padding = '0 14px 8px';
+        var msgCopyBtn = document.createElement('button');
+        msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
+        msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+        (function(c) { msgCopyBtn.addEventListener('click', function(e) { e.stopPropagation(); copyToClipboard(c); }); })(content);
+        actions.appendChild(msgCopyBtn);
+        body.appendChild(actions);
+        header.addEventListener('click', function() {
+          body.classList.toggle('collapsed');
+          hToggle.classList.toggle('collapsed');
         });
-      })(content);
-      actions.appendChild(msgCopyBtn);
-      var ttsBtn = document.createElement('button');
-      ttsBtn.className = 'msg-action-btn msg-tts-btn';
-      ttsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-      ttsBtn.title = 'Read aloud';
-      (function(msgText, btn) {
-        btn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          toggleTTS(msgText, btn);
-        });
-      })(content, ttsBtn);
-      actions.appendChild(ttsBtn);
-      el.appendChild(actions);
-      if (!animate) el.style.animation = 'none';
+        el.appendChild(header);
+        el.appendChild(body);
+        if (!animate) el.style.animation = 'none';
+      } else {
+        // Normal assistant message -- keep existing rendering code
+        el = document.createElement('div');
+        el.className = 'msg msg-assistant';
+        var textSpan = document.createElement('div');
+        textSpan.className = 'msg-assistant-text';
+        textSpan.appendChild(renderMarkdown(content));
+        el.appendChild(textSpan);
+        var actions = document.createElement('div');
+        actions.className = 'msg-actions';
+        var msgCopyBtn = document.createElement('button');
+        msgCopyBtn.className = 'msg-action-btn msg-copy-btn';
+        msgCopyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+        msgCopyBtn.title = 'Copy message';
+        (function(msgContent) {
+          msgCopyBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            copyToClipboard(msgContent);
+          });
+        })(content);
+        actions.appendChild(msgCopyBtn);
+        var ttsBtn = document.createElement('button');
+        ttsBtn.className = 'msg-action-btn msg-tts-btn';
+        ttsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        ttsBtn.title = 'Read aloud';
+        (function(msgText, btn) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            toggleTTS(msgText, btn);
+          });
+        })(content, ttsBtn);
+        actions.appendChild(ttsBtn);
+        el.appendChild(actions);
+        if (!animate) el.style.animation = 'none';
+      }
     } else if (m.role === 'tool') {
       // Hide tool calls -- they're noise in a chat view
       return;
@@ -826,7 +903,7 @@
     // optimistically add user message and track it
     var msg = { role: 'user', content: text, ts: Date.now() };
     pendingMessages.push(msg);
-    appendMessage(msg, true);
+    appendMessage(msg, true, null, -1);
     scrollToBottom(true);
 
     fetch('/api/sessions/' + encodeURIComponent(currentSession) + '/send', {
@@ -1260,6 +1337,151 @@
       if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
       if (e.key === 'Escape') { input.value = original; input.blur(); }
     });
+  });
+
+  // ========== Command Palette ==========
+  function fetchCommands() {
+    fetch('/api/commands')
+      .then(function(r) { return r.json(); })
+      .then(function(data) { commandList = data.commands || []; })
+      .catch(function() {});
+  }
+
+  function showPalette(filter) {
+    var items = commandList;
+    if (filter) {
+      var f = filter.toLowerCase();
+      items = items.filter(function(c) {
+        return c.name.toLowerCase().indexOf(f) >= 0 || c.desc.toLowerCase().indexOf(f) >= 0;
+      });
+    }
+    if (items.length === 0) {
+      hidePalette();
+      return;
+    }
+    while (cmdPalette.firstChild) cmdPalette.removeChild(cmdPalette.firstChild);
+    var max = Math.min(items.length, 8);
+    for (var i = 0; i < max; i++) {
+      var item = document.createElement('div');
+      item.className = 'cmd-item';
+      var nameEl = document.createElement('span');
+      nameEl.className = 'cmd-item-name';
+      nameEl.textContent = items[i].name;
+      var descEl = document.createElement('span');
+      descEl.className = 'cmd-item-desc';
+      descEl.textContent = items[i].desc;
+      item.appendChild(nameEl);
+      item.appendChild(descEl);
+      (function(cmd) {
+        item.addEventListener('click', function() {
+          textInput.value = cmd.name + ' ';
+          textInput.focus();
+          hidePalette();
+          toggleSendMic();
+        });
+      })(items[i]);
+      cmdPalette.appendChild(item);
+    }
+    if (items.length > max) {
+      var more = document.createElement('div');
+      more.className = 'cmd-item';
+      more.innerHTML = '<span class="cmd-item-desc">... ' + (items.length - max) + ' more</span>';
+      cmdPalette.appendChild(more);
+    }
+    cmdPalette.classList.add('visible');
+  }
+
+  function hidePalette() {
+    cmdPalette.classList.remove('visible');
+  }
+
+  textInput.addEventListener('input', function() {
+    var val = textInput.value;
+    if (val.startsWith('/') && val.indexOf('\n') === -1) {
+      var filter = val.substring(1);
+      showPalette(filter ? '/' + filter : '');
+    } else {
+      hidePalette();
+    }
+  });
+
+  cmdBtn.addEventListener('click', function() {
+    if (cmdPalette.classList.contains('visible')) {
+      hidePalette();
+    } else {
+      showPalette('');
+    }
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!cmdPalette.contains(e.target) && e.target !== cmdBtn && e.target !== textInput) {
+      hidePalette();
+    }
+  });
+
+  fetchCommands();
+
+  // ========== New Session ==========
+  function openNewSession() {
+    fetch('/api/config')
+      .then(function(r) { return r.json(); })
+      .then(function(config) {
+        while (presetList.firstChild) presetList.removeChild(presetList.firstChild);
+        var presets = config.presets || [];
+        presets.forEach(function(p) {
+          var card = document.createElement('div');
+          card.className = 'preset-card';
+          var name = document.createElement('div');
+          name.className = 'preset-card-name';
+          name.textContent = p.name;
+          var path = document.createElement('div');
+          path.className = 'preset-card-path';
+          path.textContent = p.path;
+          card.appendChild(name);
+          card.appendChild(path);
+          card.addEventListener('click', function() {
+            createSession(p.path, '');
+          });
+          presetList.appendChild(card);
+        });
+      })
+      .catch(function() {});
+    customPath.value = '';
+    newSessionBackdrop.classList.add('visible');
+    newSessionPanel.classList.add('visible');
+  }
+
+  function closeNewSession() {
+    newSessionBackdrop.classList.remove('visible');
+    newSessionPanel.classList.remove('visible');
+  }
+
+  function createSession(path, name) {
+    closeNewSession();
+    showActionToast('Creating session...', 'info');
+    fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path, name: name })
+    })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); });
+      return r.json();
+    })
+    .then(function(data) {
+      showActionToast('Session ' + data.name + ' created', 'success');
+      loadSessions();
+    })
+    .catch(function(err) {
+      showActionToast(err.message || 'Failed to create session', 'error');
+    });
+  }
+
+  newBtn.addEventListener('click', openNewSession);
+  newSessionBackdrop.addEventListener('click', closeNewSession);
+  customLaunch.addEventListener('click', function() {
+    var p = customPath.value.trim();
+    if (p) createSession(p, '');
   });
 
   // ========== Settings ==========

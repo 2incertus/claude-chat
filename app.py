@@ -1,11 +1,13 @@
 import os
 import re
 import json
+import glob
 import hashlib
 import subprocess
 import asyncio
 import time
 import httpx
+import yaml
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
 from fastapi.responses import JSONResponse, FileResponse, Response
@@ -31,6 +33,7 @@ ALLOWED_COMMANDS = {
     "kill-session",
     "set-option",
     "respawn-pane",
+    "new-session",
 }
 
 # ---------------------------------------------------------------------------
@@ -752,3 +755,109 @@ async def send_ntfy(request_body: dict):
         return {"sent": True, "status": resp.status_code}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"ntfy error: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Command discovery
+# ---------------------------------------------------------------------------
+_commands_cache: dict = {"commands": [], "ts": 0}
+
+BUILTIN_COMMANDS = [
+    {"name": "/compact", "desc": "Compress conversation context", "source": "builtin"},
+    {"name": "/clear", "desc": "Clear conversation history", "source": "builtin"},
+    {"name": "/help", "desc": "Show available commands", "source": "builtin"},
+    {"name": "/doctor", "desc": "Check Claude Code health", "source": "builtin"},
+    {"name": "/config", "desc": "View or change settings", "source": "builtin"},
+    {"name": "/cost", "desc": "Show token usage and cost", "source": "builtin"},
+    {"name": "/memory", "desc": "Edit CLAUDE.md memory files", "source": "builtin"},
+    {"name": "/login", "desc": "Log in to your account", "source": "builtin"},
+    {"name": "/logout", "desc": "Log out of your account", "source": "builtin"},
+    {"name": "/status", "desc": "Show session status", "source": "builtin"},
+    {"name": "/review", "desc": "Review recent changes", "source": "builtin"},
+    {"name": "/bug", "desc": "Report a bug", "source": "builtin"},
+    {"name": "/init", "desc": "Initialize project CLAUDE.md", "source": "builtin"},
+]
+
+
+@app.get("/api/commands")
+async def list_commands():
+    now = time.time()
+    if _commands_cache["ts"] and (now - _commands_cache["ts"]) < 60:
+        return {"commands": _commands_cache["commands"]}
+
+    skills = []
+    skills_dir = os.path.join(CLAUDE_DATA_DIR, "skills")
+    for skill_md in glob.glob(os.path.join(skills_dir, "*", "SKILL.md")):
+        try:
+            with open(skill_md) as f:
+                content = f.read(2000)
+            if content.startswith("---"):
+                end = content.index("---", 3)
+                front = yaml.safe_load(content[3:end])
+                if front and front.get("name"):
+                    skills.append({
+                        "name": "/" + front["name"],
+                        "desc": (front.get("description") or "")[:100],
+                        "source": "skill",
+                    })
+        except Exception:
+            continue
+
+    _commands_cache["commands"] = BUILTIN_COMMANDS + skills
+    _commands_cache["ts"] = now
+    return {"commands": _commands_cache["commands"]}
+
+
+# ---------------------------------------------------------------------------
+# Session creation
+# ---------------------------------------------------------------------------
+CONFIG_FILE = "/config/config.json"
+
+
+def _load_config() -> dict:
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {"presets": []}
+
+
+def _is_allowed_path(path: str) -> bool:
+    config = _load_config()
+    allowed_paths = {p["path"] for p in config.get("presets", [])}
+    if path in allowed_paths:
+        return True
+    return path.startswith("/home/ubuntu/")
+
+
+@app.get("/api/config")
+async def get_config():
+    return _load_config()
+
+
+@app.post("/api/sessions")
+async def create_session(body: dict):
+    path = body.get("path", "/home/ubuntu")
+    name = body.get("name", "")
+
+    if not _is_allowed_path(path):
+        raise HTTPException(status_code=400, detail=f"Path not allowed: {path}")
+
+    if not name:
+        base = os.path.basename(path) or "s"
+        name = base[:10]
+        existing = {s["name"] for s in discover_sessions()}
+        if name in existing:
+            i = 1
+            while f"{name}{i}" in existing:
+                i += 1
+            name = f"{name}{i}"
+
+    validate_session_name(name)
+    if _session_exists(name):
+        raise HTTPException(status_code=409, detail=f"Session {name} already exists")
+
+    run_tmux("new-session", "-d", "-s", name, "-c", path,
+             "/home/ubuntu/.local/bin/claude")
+
+    return {"created": True, "name": name, "path": path}
