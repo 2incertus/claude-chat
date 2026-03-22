@@ -1360,8 +1360,7 @@
       return;
     }
     while (cmdPalette.firstChild) cmdPalette.removeChild(cmdPalette.firstChild);
-    var max = Math.min(items.length, 8);
-    for (var i = 0; i < max; i++) {
+    for (var i = 0; i < items.length; i++) {
       var item = document.createElement('div');
       item.className = 'cmd-item';
       var nameEl = document.createElement('span');
@@ -1381,12 +1380,6 @@
         });
       })(items[i]);
       cmdPalette.appendChild(item);
-    }
-    if (items.length > max) {
-      var more = document.createElement('div');
-      more.className = 'cmd-item';
-      more.innerHTML = '<span class="cmd-item-desc">... ' + (items.length - max) + ' more</span>';
-      cmdPalette.appendChild(more);
     }
     cmdPalette.classList.add('visible');
   }

@@ -959,7 +959,7 @@ body {
   right: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
-  max-height: 320px;
+  max-height: 60vh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   z-index: 20;
