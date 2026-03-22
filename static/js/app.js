@@ -733,6 +733,7 @@
           checkScrollPosition();
 
           // Re-render all messages (content_hash changed)
+          stopTTS(); // prevent dangling ttsPlayingBtn reference
           renderMessages(data.messages);
 
           // If new messages arrived and user is near bottom, scroll
@@ -1038,8 +1039,10 @@
     }
   }
   textInput.addEventListener('input', function() {
-    textInput.style.height = 'auto';
-    textInput.style.height = Math.min(textInput.scrollHeight, 100) + 'px';
+    requestAnimationFrame(function() {
+      textInput.style.height = 'auto';
+      textInput.style.height = Math.min(textInput.scrollHeight, 100) + 'px';
+    });
     toggleSendMic();
   });
 
@@ -1509,7 +1512,7 @@
       }
       var metaTheme = document.querySelector('meta[name="theme-color"]');
       if (metaTheme) {
-        metaTheme.setAttribute('content', value === 'light' ? '#F2F0ED' : '#0A0A0A');
+        metaTheme.setAttribute('content', value === 'oled' ? '#000000' : value === 'light' ? '#F2F0ED' : '#0A0A0A');
       }
     } else if (key === 'pollSpeed') {
       pollSpeedSetting = value || 'normal';
