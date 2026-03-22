@@ -391,12 +391,23 @@
 
     // Re-append pending messages not yet in server data
     var now = Date.now();
-    function normalize(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+    function normalize(s) { return (s || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
     pendingMessages = pendingMessages.filter(function(pm) {
       if (now - pm.ts > 30000) return false; // expire after 30s
       var pmNorm = normalize(pm.content);
+      var pmSnippet = pmNorm.substring(0, 30);
+      if (!pmSnippet) return false; // empty pending msg, drop it
       var found = messages.some(function(m) {
-        return m.role === 'user' && normalize(m.content).indexOf(pmNorm.substring(0, 40)) >= 0;
+        if (m.role !== 'user') return false;
+        var mNorm = normalize(m.content);
+        // Primary check: first 30 chars match (after whitespace normalization + lowercase)
+        if (mNorm.indexOf(pmSnippet) >= 0) return true;
+        // Fallback: timestamp proximity (within 30s) AND content starts the same (first 15 chars)
+        if (m.ts && Math.abs(m.ts - pm.ts) < 30000) {
+          var shortSnippet = pmNorm.substring(0, 15);
+          if (shortSnippet && mNorm.indexOf(shortSnippet) >= 0) return true;
+        }
+        return false;
       });
       return !found;
     });
@@ -733,24 +744,99 @@
   }
 
   // ========== Session Management (kill / respawn / dismiss) ==========
+
+  function findCardWrapper(name) {
+    var card = sessionListEl.querySelector('.session-card[data-name="' + name + '"]');
+    return card ? card.closest('.session-card-wrapper') : null;
+  }
+
+  function showActionToast(message, type) {
+    var existing = document.querySelector('.action-toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'action-toast ' + (type || 'info');
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { toast.classList.add('visible'); });
+    });
+    setTimeout(function() {
+      toast.classList.remove('visible');
+      setTimeout(function() { if (toast.parentNode) toast.remove(); }, 250);
+    }, 2500);
+  }
+
   function killSession(name) {
+    var wrapper = findCardWrapper(name);
+    if (wrapper) {
+      var btn = wrapper.querySelector('.swipe-action-btn.kill');
+      if (btn) {
+        btn.innerHTML = '<span class="btn-spinner"></span> Killing';
+        btn.classList.add('loading');
+      }
+      var card = wrapper.querySelector('.session-card');
+      if (card) card.classList.add('processing');
+    }
+
     fetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' })
       .then(function(r) { return r.json(); })
-      .then(function() { loadSessions(); })
-      .catch(function() { loadSessions(); });
+      .then(function(data) {
+        showActionToast(data.killed ? 'Session killed' : 'Could not kill -- try again', data.killed ? 'success' : 'error');
+        loadSessions();
+      })
+      .catch(function() {
+        showActionToast('Kill failed', 'error');
+        loadSessions();
+      });
   }
 
   function respawnSession(name) {
+    var wrapper = findCardWrapper(name);
+    if (wrapper) {
+      var btn = wrapper.querySelector('.respawn-btn');
+      if (btn) {
+        btn.innerHTML = '<span class="btn-spinner"></span> Respawning';
+        btn.classList.add('loading');
+      }
+    }
+
     fetch('/api/sessions/' + encodeURIComponent(name) + '/respawn', { method: 'POST' })
       .then(function(r) { return r.json(); })
-      .then(function() { loadSessions(); })
-      .catch(function() { loadSessions(); });
+      .then(function(data) {
+        if (data.respawned) {
+          showActionToast('Session respawned', 'success');
+        } else {
+          showActionToast(data.message || 'Already running', 'info');
+        }
+        loadSessions();
+      })
+      .catch(function() {
+        showActionToast('Respawn failed', 'error');
+        loadSessions();
+      });
   }
 
   function dismissSession(name) {
+    var wrapper = findCardWrapper(name);
+    if (wrapper) {
+      var btn = wrapper.querySelector('.swipe-action-btn.dismiss');
+      if (btn) {
+        btn.innerHTML = '<span class="btn-spinner"></span>';
+        btn.classList.add('loading');
+      }
+      wrapper.classList.add('dismissing');
+    }
+
     fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
-      .then(function() { loadSessions(); })
-      .catch(function() { loadSessions(); });
+      .then(function() {
+        showActionToast('Session dismissed', 'success');
+        setTimeout(loadSessions, 200);
+      })
+      .catch(function() {
+        showActionToast('Dismiss failed', 'error');
+        if (wrapper) wrapper.classList.remove('dismissing');
+        loadSessions();
+      });
   }
 
   // ========== Show Hidden Toggle ==========

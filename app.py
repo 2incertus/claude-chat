@@ -266,16 +266,28 @@ def parse_messages(output: str) -> list[dict]:
         r"^(Updated?|Read?|Write?|Bash?|Edit|Grep?|Glob?|"
         r"Agent|Skill|Task\w*|Tool\w*|Notebook\w*|Search?)\("
     )
-    _BG_CMD_RE = re.compile(r"^Background command ")
+    _BG_CMD_RE = re.compile(r"Background command ")
+    _WIBBLE_RE = re.compile(r"^\w+ing\.\.\.\s*\(\d+s\)")
 
     def _is_visible(m):
         if not m.get("content", "").strip() and m["role"] != "tool":
             return False
+        c = m["content"].strip()
+        # Filter background command messages regardless of role
+        if _BG_CMD_RE.search(c):
+            return False
+        # Filter "Wibbling... (0s)" style Claude Code status messages
+        if _WIBBLE_RE.match(c):
+            return False
         if m["role"] == "assistant":
-            c = m["content"].strip()
             if _TOOL_LEAK_RE.match(c):
                 return False
-            if _BG_CMD_RE.match(c):
+        # Filter user messages that are ONLY background command text
+        # (can happen when bg cmd output gets parsed as continuation of user msg)
+        if m["role"] == "user":
+            # Check each line -- if ALL non-empty lines are bg cmd or wibble, hide it
+            lines = [l.strip() for l in c.split("\n") if l.strip()]
+            if lines and all(_BG_CMD_RE.search(l) or _WIBBLE_RE.match(l) for l in lines):
                 return False
         return True
 
