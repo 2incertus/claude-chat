@@ -404,8 +404,8 @@
     // Clear feed
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
 
-    messages.forEach(function(m) {
-      appendMessage(m, false);
+    messages.forEach(function(m, i) {
+      appendMessage(m, false, messages, i);
     });
 
     // Re-append pending messages not yet in server data
@@ -431,7 +431,7 @@
       return !found;
     });
     pendingMessages.forEach(function(pm) {
-      appendMessage(pm, false);
+      appendMessage(pm, false, null, -1);
     });
   }
 
@@ -562,12 +562,24 @@
     return frag;
   }
 
-  function appendMessage(m, animate) {
+  function appendMessage(m, animate, allMsgs, msgIdx) {
     var el;
     if (m.role === 'user') {
       el = document.createElement('div');
       el.className = 'msg msg-user';
-      el.textContent = m.content || m.text || '';
+      var userContent = m.content || m.text || '';
+      if (userContent.startsWith('/')) {
+        var spaceIdx = userContent.indexOf(' ');
+        var cmdName = spaceIdx > 0 ? userContent.substring(0, spaceIdx) : userContent;
+        var cmdArgs = spaceIdx > 0 ? userContent.substring(spaceIdx) : '';
+        var pill = document.createElement('span');
+        pill.className = 'cmd-pill';
+        pill.textContent = cmdName;
+        el.appendChild(pill);
+        if (cmdArgs) el.appendChild(document.createTextNode(cmdArgs));
+      } else {
+        el.textContent = userContent;
+      }
       if (!animate) el.style.animation = 'none';
     } else if (m.role === 'assistant') {
       el = document.createElement('div');
@@ -1211,6 +1223,44 @@
     if (recognition) recognition.stop();
     if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
   }
+
+  // ========== Session Title Editing ==========
+  var isEditingTitle = false;
+
+  chatTitle.addEventListener('click', function() {
+    if (isEditingTitle || !currentSession) return;
+    isEditingTitle = true;
+    var original = chatTitle.textContent;
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.value = original;
+    input.style.cssText = 'background:var(--surface2);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:4px 8px;font-size:0.9rem;font-family:inherit;outline:none;width:100%;text-align:center;';
+    chatTitle.textContent = '';
+    chatTitle.appendChild(input);
+    input.focus();
+    input.select();
+
+    function save() {
+      var newTitle = input.value.trim();
+      if (newTitle && newTitle !== original) {
+        chatTitle.textContent = newTitle;
+        fetch('/api/sessions/' + encodeURIComponent(currentSession) + '/title', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle })
+        }).catch(function() {});
+      } else {
+        chatTitle.textContent = original;
+      }
+      isEditingTitle = false;
+    }
+
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { input.value = original; input.blur(); }
+    });
+  });
 
   // ========== Settings ==========
   var POLL_SPEEDS = {

@@ -55,12 +55,20 @@ TOOL_CALL_RE = re.compile(
 http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
+TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
     http_client = httpx.AsyncClient(timeout=10.0)
+    # Load persisted titles
+    if os.path.exists(TITLES_FILE):
+        try:
+            with open(TITLES_FILE) as f:
+                title_cache.update(json.load(f))
+        except Exception:
+            pass
     yield
     await http_client.aclose()
 
@@ -640,6 +648,30 @@ async def dismiss_session(name: str):
         await asyncio.sleep(1)
     run_tmux("kill-session", "-t", name)
     return {"dismissed": True}
+
+
+@app.put("/api/sessions/{name}/title")
+async def set_session_title(name: str, body: dict):
+    """Set a custom title for a session."""
+    validate_session_name(name)
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title must not be empty")
+    title_cache[name] = title[:60]
+    # Persist to disk (atomic write)
+    try:
+        existing = {}
+        if os.path.exists(TITLES_FILE):
+            with open(TITLES_FILE) as f:
+                existing = json.load(f)
+        existing[name] = title[:60]
+        tmp = TITLES_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(existing, f)
+        os.replace(tmp, TITLES_FILE)
+    except Exception:
+        pass
+    return {"title": title_cache[name]}
 
 
 @app.get("/api/sessions/{name}/poll")
