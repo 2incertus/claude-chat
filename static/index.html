@@ -65,12 +65,13 @@
     <div id="uploadToast" style="display:none;position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:var(--surface2);color:var(--text);padding:10px 20px;border-radius:var(--radius-sm);font-size:0.85rem;z-index:50;box-shadow:0 4px 20px rgba(0,0,0,0.5);">Uploading...</div>
   </div>
 
-  <!-- Settings -->
-  <div class="settings-backdrop" id="settingsBackdrop"></div>
-  <div class="settings-panel" id="settingsPanel">
-    <div class="settings-handle"></div>
-    <h3 class="settings-title">Settings</h3>
-  </div>
+</div>
+
+<!-- Settings (outside app-shell so position:fixed works correctly) -->
+<div class="settings-backdrop" id="settingsBackdrop"></div>
+<div class="settings-panel" id="settingsPanel">
+  <div class="settings-handle"></div>
+  <h3 class="settings-title">Settings</h3>
 </div>
 
 <script src="/static/js/app.js"></script>
