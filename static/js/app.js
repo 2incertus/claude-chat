@@ -1046,6 +1046,16 @@
     }
     costBadge.textContent = parts.join(' \u00b7 ');
     costBadge.style.display = '';
+    // Color-code by context usage
+    var pct = costInfo.context_pct;
+    if (pct != null) {
+      var color = pct <= 30 ? '#4ade80' : pct <= 50 ? '#facc15' : pct <= 80 ? '#f97316' : '#ef4444';
+      costBadge.style.color = color;
+      costBadge.style.borderColor = color;
+    } else {
+      costBadge.style.color = '';
+      costBadge.style.borderColor = '';
+    }
   }
 
   function updateWaitingInput(waiting) {
