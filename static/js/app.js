@@ -1604,7 +1604,8 @@
         el.appendChild(renderMarkdown(userContent));
       }
       // Detect uploaded image paths and show inline preview
-      var imgMatch = userContent.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
+      // tmux wraps long lines mid-filename, so strip newlines before matching
+      var imgMatch = userContent.replace(/\n/g, '').match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
       var imgEl = null;
       if (imgMatch) {
         imgEl = document.createElement('img');
