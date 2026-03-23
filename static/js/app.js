@@ -3765,6 +3765,11 @@
     closeShortcuts();
     if (starFilterBtn) starFilterBtn.click();
   });
+  var actionSearch = document.getElementById('actionSearch');
+  if (actionSearch) actionSearch.addEventListener('click', function() {
+    closeShortcuts();
+    openGlobalSearch();
+  });
 
   // ========== Global Search Modal ==========
   var searchBackdrop = document.getElementById('searchBackdrop');
