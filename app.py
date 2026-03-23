@@ -1156,7 +1156,7 @@ def _is_allowed_path(path: str) -> bool:
     allowed_paths = {p["path"] for p in config.get("presets", [])}
     if path in allowed_paths:
         return True
-    return path.startswith("/home/ubuntu/")
+    return path == "/home/ubuntu" or path.startswith("/home/ubuntu/")
 
 
 @app.get("/api/config")
