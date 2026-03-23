@@ -407,6 +407,7 @@
     contentHash = '';
     idleCount = 0;
     lastMessageCount = 0;
+    pendingMessages = [];
     starFilterActive = false;
     chatFeed.classList.remove('starred-only');
     stopSessionListPolling();
