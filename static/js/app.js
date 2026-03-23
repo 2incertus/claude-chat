@@ -1165,30 +1165,32 @@
         agentHeader.appendChild(agentToggle);
         var agentBody = document.createElement('div');
         agentBody.className = 'agent-result-body collapsed';
-        var agentText = document.createElement('div');
-        agentText.className = 'msg-assistant-text';
-        agentText.appendChild(renderMarkdown(agentContent));
-        agentBody.appendChild(agentText);
+
         if (m.tool_results) {
-          var toolResults = document.createElement('div');
-          toolResults.className = 'agent-tool-results';
           var resultsArr = Array.isArray(m.tool_results) ? m.tool_results : [m.tool_results];
-          // Separate backgrounded agent entries from regular results
           var bgAgents = [];
-          var regularResults = [];
+          var fileChanges = [];
+          var otherResults = [];
+
           for (var ri = 0; ri < resultsArr.length; ri++) {
             var rItem = typeof resultsArr[ri] === 'string' ? resultsArr[ri] : JSON.stringify(resultsArr[ri]);
-            if (rItem.indexOf('Backgrounded agent') === 0 || rItem.indexOf('Backgrounded agent') >= 0 && rItem.indexOf('\u21b3') >= 0) {
+            if (rItem.indexOf('Backgrounded agent') >= 0 || rItem.indexOf('\u21b3') >= 0) {
               bgAgents.push(rItem);
+            } else if (/^(Added|Removed|Modified|Updated|Created|Deleted|Changed)\s/i.test(rItem) || /\d+\s+(line|file)/i.test(rItem)) {
+              fileChanges.push(rItem);
             } else {
-              regularResults.push(rItem);
+              otherResults.push(rItem);
             }
           }
+
+          // Sub-agents section
           if (bgAgents.length > 0) {
+            var bgSection = document.createElement('div');
+            bgSection.className = 'agent-section';
             var bgLabel = document.createElement('div');
-            bgLabel.className = 'agent-tool-results-label';
-            bgLabel.textContent = 'Sub-agents (' + bgAgents.length + ')';
-            toolResults.appendChild(bgLabel);
+            bgLabel.className = 'agent-section-label';
+            bgLabel.textContent = '\u25C7 ' + bgAgents.length + ' sub-agent' + (bgAgents.length > 1 ? 's' : '') + ' dispatched';
+            bgSection.appendChild(bgLabel);
             for (var bi = 0; bi < bgAgents.length; bi++) {
               var subItem = document.createElement('div');
               subItem.className = 'agent-sub-item';
@@ -1197,25 +1199,78 @@
               diamondIcon.textContent = '\u25C7';
               var subDesc = document.createElement('span');
               subDesc.className = 'agent-sub-item-desc';
-              subDesc.textContent = bgAgents[bi];
+              // Clean up the "Backgrounded agent (↳ to manage ·" prefix
+              var cleanDesc = bgAgents[bi]
+                .replace(/^Backgrounded agent\s*/, '')
+                .replace(/^\(\u21b3\s*to manage\s*[·\u00b7]\s*/, '')
+                .replace(/^["']|["']$/g, '')
+                .replace(/\)$/, '')
+                .trim();
+              subDesc.textContent = cleanDesc || bgAgents[bi];
               subItem.appendChild(diamondIcon);
               subItem.appendChild(subDesc);
-              toolResults.appendChild(subItem);
+              bgSection.appendChild(subItem);
             }
+            agentBody.appendChild(bgSection);
           }
-          if (regularResults.length > 0) {
-            var trLabel = document.createElement('div');
-            trLabel.className = 'agent-tool-results-label';
-            trLabel.textContent = 'Tool Results';
-            toolResults.appendChild(trLabel);
-            var trContent = document.createElement('pre');
-            trContent.className = 'code-block';
-            trContent.style.margin = '4px 0 0';
-            trContent.style.fontSize = '12px';
-            trContent.textContent = regularResults.join('\n');
-            toolResults.appendChild(trContent);
+
+          // File changes section
+          if (fileChanges.length > 0) {
+            var fcSection = document.createElement('div');
+            fcSection.className = 'agent-section';
+            var fcLabel = document.createElement('div');
+            fcLabel.className = 'agent-section-label';
+            fcLabel.textContent = '\u2699 Changes';
+            fcSection.appendChild(fcLabel);
+            for (var fi = 0; fi < fileChanges.length; fi++) {
+              var fcItem = document.createElement('div');
+              fcItem.className = 'agent-change-item';
+              fcItem.textContent = fileChanges[fi];
+              fcSection.appendChild(fcItem);
+            }
+            agentBody.appendChild(fcSection);
           }
-          agentBody.appendChild(toolResults);
+
+          // Other results (rendered as markdown if substantive, code block if short)
+          if (otherResults.length > 0) {
+            var orSection = document.createElement('div');
+            orSection.className = 'agent-section';
+            var orText = otherResults.join('\n').trim();
+            if (orText.length > 200) {
+              var orLabel = document.createElement('div');
+              orLabel.className = 'agent-section-label';
+              orLabel.textContent = '\u2192 Output';
+              orSection.appendChild(orLabel);
+              var orContent = document.createElement('div');
+              orContent.className = 'msg-assistant-text';
+              orContent.appendChild(renderMarkdown(orText));
+              orSection.appendChild(orContent);
+            } else if (orText) {
+              var orPre = document.createElement('div');
+              orPre.className = 'agent-change-item';
+              orPre.textContent = orText;
+              orSection.appendChild(orPre);
+            }
+            agentBody.appendChild(orSection);
+          }
+        }
+
+        // If no tool_results, show the prompt summary
+        if (!m.tool_results || m.tool_results.length === 0) {
+          var summaryText = document.createElement('div');
+          summaryText.className = 'agent-section';
+          var summaryLabel = document.createElement('div');
+          summaryLabel.className = 'agent-section-label';
+          summaryLabel.textContent = '\u2192 Task';
+          summaryText.appendChild(summaryLabel);
+          var summaryContent = document.createElement('div');
+          summaryContent.className = 'msg-assistant-text';
+          summaryContent.style.fontSize = '0.8rem';
+          // Show first 200 chars of prompt as summary
+          var promptSummary = agentContent.length > 200 ? agentContent.substring(0, 200) + '\u2026' : agentContent;
+          summaryContent.appendChild(renderMarkdown(promptSummary));
+          summaryText.appendChild(summaryContent);
+          agentBody.appendChild(summaryText);
         }
         agentHeader.addEventListener('click', function() {
           agentBody.classList.toggle('collapsed');
