@@ -216,33 +216,43 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Require Bearer token on /api/ routes (except /api/auth and /health)."""
+class AuthMiddleware:
+    """Raw ASGI middleware — require Bearer token on /api/ routes.
+    Uses raw ASGI instead of BaseHTTPMiddleware to support WebSocket."""
 
-    async def dispatch(self, request: Request, call_next):
-        if not AUTH_ENABLED:
-            return await call_next(request)
+    def __init__(self, app):
+        self.app = app
 
-        path = request.url.path
-        # Allow through: static files, index, health, manifest, auth endpoints
+    async def __call__(self, scope, receive, send):
+        if not AUTH_ENABLED or scope["type"] == "websocket":
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
         if not path.startswith("/api/"):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
         if path in ("/api/auth", "/api/auth/check") or path == "/health":
-            return await call_next(request)
-        # WebSocket endpoints handle their own auth via query param
-        if path.endswith("/ws"):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # Check Bearer token
-        auth_header = request.headers.get("authorization", "")
+        # Check Bearer token from headers
+        headers = dict(scope.get("headers", []))
+        auth_header = (headers.get(b"authorization", b"")).decode()
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
             if token in valid_tokens and (time.time() - valid_tokens[token]) < TOKEN_TTL:
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
             elif token in valid_tokens:
-                del valid_tokens[token]  # expired
+                del valid_tokens[token]
 
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        await response(scope, receive, send)
 
 
 app.add_middleware(AuthMiddleware)
