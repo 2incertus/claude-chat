@@ -575,6 +575,7 @@ async def _refresh_title(session_name: str, messages: list[dict]) -> None:
 
 COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
 CTX_RE = re.compile(r"CTX\s+(\d+)%")
+USAGE_RE = re.compile(r"5h\s+(\d+)%.*?7d\s+(\d+)%")
 
 
 def extract_cost_info(raw: str) -> dict | None:
@@ -583,6 +584,8 @@ def extract_cost_info(raw: str) -> dict | None:
     tail = lines[-50:] if len(lines) > 50 else lines
     cost = None
     ctx_pct = None
+    usage_5h = None
+    usage_7d = None
     for line in reversed(tail):
         if cost is None:
             m = COST_RE.search(line)
@@ -592,8 +595,13 @@ def extract_cost_info(raw: str) -> dict | None:
             m = CTX_RE.search(line)
             if m:
                 ctx_pct = int(m.group(1))
-    if cost is not None or ctx_pct is not None:
-        return {"cost": cost, "context_pct": ctx_pct}
+        if usage_5h is None:
+            m = USAGE_RE.search(line)
+            if m:
+                usage_5h = int(m.group(1))
+                usage_7d = int(m.group(2))
+    if cost is not None or ctx_pct is not None or usage_5h is not None:
+        return {"cost": cost, "context_pct": ctx_pct, "usage_5h": usage_5h, "usage_7d": usage_7d}
     return None
 
 

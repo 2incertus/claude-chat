@@ -1138,17 +1138,20 @@
     }
     var parts = [];
     if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
-    if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% remaining');
+    if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% ctx');
+    if (costInfo.usage_5h != null) parts.push('5h ' + costInfo.usage_5h + '%');
+    if (costInfo.usage_7d != null) parts.push('7d ' + costInfo.usage_7d + '%');
     if (parts.length === 0) {
       costBadge.style.display = 'none';
       return;
     }
     costBadge.textContent = parts.join(' \u00b7 ');
     costBadge.style.display = '';
-    // Color-code by context REMAINING: high = green (plenty left), low = red (running out)
+    // Color-code by context REMAINING: high = good, low = warning
+    // Use darker colors that work on both light and dark themes
     var pct = costInfo.context_pct;
     if (pct != null) {
-      var color = pct >= 70 ? '#4ade80' : pct >= 40 ? '#facc15' : pct >= 20 ? '#f97316' : '#ef4444';
+      var color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#ca8a04' : pct >= 20 ? '#ea580c' : '#dc2626';
       costBadge.style.color = color;
       costBadge.style.borderColor = color;
     } else {
