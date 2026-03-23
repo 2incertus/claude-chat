@@ -11,7 +11,7 @@ import httpx
 import yaml
 import aiosqlite
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -246,6 +246,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(AuthMiddleware)
 app.add_middleware(NoCacheStaticMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ---------------------------------------------------------------------------
+# WebSocket connection manager
+# ---------------------------------------------------------------------------
+
+class ConnectionManager:
+    def __init__(self):
+        self.connections: dict[str, list[WebSocket]] = {}
+
+    async def connect(self, session_name: str, ws: WebSocket):
+        await ws.accept()
+        if session_name not in self.connections:
+            self.connections[session_name] = []
+        self.connections[session_name].append(ws)
+
+    def disconnect(self, session_name: str, ws: WebSocket):
+        if session_name in self.connections:
+            self.connections[session_name] = [c for c in self.connections[session_name] if c is not ws]
+            if not self.connections[session_name]:
+                del self.connections[session_name]
+
+ws_manager = ConnectionManager()
 
 # ---------------------------------------------------------------------------
 # tmux helpers
@@ -1022,6 +1044,65 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
         "waiting_input": status == "waiting_input",
         "cost_info": cost_info,
     }
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
+
+@app.websocket("/api/sessions/{name}/ws")
+async def session_websocket(ws: WebSocket, name: str):
+    token = ws.query_params.get("token", "")
+    if AUTH_ENABLED and token not in valid_tokens:
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+
+    validate_session_name(name)
+    await ws_manager.connect(name, ws)
+
+    try:
+        last_hash = ""
+        while True:
+            try:
+                raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-10000")
+            except RuntimeError:
+                await ws.send_json({"type": "session_dead"})
+                break
+
+            chash = content_hash(raw)
+            status = get_session_status(raw)
+            cost_info = extract_cost_info(raw)
+
+            if chash != last_hash:
+                messages = parse_messages(raw)
+                await ws.send_json({
+                    "type": "update",
+                    "has_changes": True,
+                    "content_hash": chash,
+                    "status": status,
+                    "messages": messages,
+                    "waiting_input": status == "waiting_input",
+                    "cost_info": cost_info,
+                })
+                last_hash = chash
+            else:
+                await ws.send_json({
+                    "type": "status",
+                    "has_changes": False,
+                    "content_hash": chash,
+                    "status": status,
+                    "waiting_input": status == "waiting_input",
+                    "cost_info": cost_info,
+                })
+
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=1.5)
+            except asyncio.TimeoutError:
+                pass
+            except WebSocketDisconnect:
+                break
+    finally:
+        ws_manager.disconnect(name, ws)
 
 
 # ---------------------------------------------------------------------------
