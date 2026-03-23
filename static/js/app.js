@@ -3503,6 +3503,25 @@
 
   shortcutsBackdrop.addEventListener('click', closeShortcuts);
 
+  // Mobile "?" button opens shortcuts
+  var mobileShortcutsBtn = document.getElementById('mobileShortcutsBtn');
+  if (mobileShortcutsBtn) {
+    mobileShortcutsBtn.addEventListener('click', openShortcuts);
+  }
+
+  // Action buttons inside shortcuts panel
+  var actionCopyAll = document.getElementById('actionCopyAll');
+  var actionExportMd = document.getElementById('actionExportMd');
+  var actionExportJson = document.getElementById('actionExportJson');
+  var actionStarFilter = document.getElementById('actionStarFilter');
+  if (actionCopyAll) actionCopyAll.addEventListener('click', function() { closeShortcuts(); copyConversation(); });
+  if (actionExportMd) actionExportMd.addEventListener('click', function() { closeShortcuts(); exportConversation('markdown'); });
+  if (actionExportJson) actionExportJson.addEventListener('click', function() { closeShortcuts(); exportConversation('json'); });
+  if (actionStarFilter) actionStarFilter.addEventListener('click', function() {
+    closeShortcuts();
+    if (starFilterBtn) starFilterBtn.click();
+  });
+
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
     var tag = (e.target.tagName || '').toLowerCase();

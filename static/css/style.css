@@ -1996,6 +1996,7 @@ button:focus-visible { outline-offset: -2px; }
 
 /* ===== Desktop layout (768px+) ===== */
 @media (min-width: 768px) {
+  .mobile-shortcuts-btn { display: none !important; }
   .app-shell {
     display: flex;
     flex-direction: row;
@@ -2533,10 +2534,30 @@ body.font-large { font-size: 18px; }
   font-family: inherit; min-width: 24px; text-align: center;
   color: var(--text);
 }
+.shortcuts-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-medium);
+}
+.shortcuts-action-row {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px;
+}
+.shortcuts-action-btn {
+  background: var(--surface2); border: 1px solid var(--border-medium);
+  color: var(--text); border-radius: 8px; padding: 8px 14px;
+  font-size: 0.8rem; font-family: inherit; cursor: pointer;
+  touch-action: manipulation; transition: background 150ms;
+}
+.shortcuts-action-btn:active { background: var(--accent); color: white; border-color: var(--accent); }
 @media (max-width: 767px) {
   #starFilterBtn { display: none !important; }
   .msg-star-btn { display: none !important; }
   #copyAllBtn { display: none !important; }
+  .mobile-shortcuts-btn {
+    font-size: 0.85rem !important;
+    font-weight: 700 !important;
+    color: var(--text-dim) !important;
+  }
   #screenChat .header .refresh-btn,
   #screenChat .header .bell-btn {
     min-width: 32px;
