@@ -827,12 +827,48 @@
           frag.appendChild(ol);
           continue;
         }
+        // Task/checklist items: lines with ✓✔✗✘ or - [x]/- [ ] or ending with ... ✓
+        var taskRe = /[\u2713\u2714\u2717\u2718]|^- \[[ xX]\]/;
+        if (taskRe.test(gl) || /\.\.\.\s*[\u2713\u2714]/.test(gl)) {
+          var taskList = document.createElement('div');
+          taskList.className = 'task-list';
+          while (li < groupLines.length && (taskRe.test(groupLines[li]) || /\.\.\.\s*[\u2713\u2714]/.test(groupLines[li]) || /^\.\.\.\s*\+\d+/.test(groupLines[li]))) {
+            var tl = groupLines[li];
+            var taskItem = document.createElement('div');
+            // Determine if completed
+            var isDone = /[\u2713\u2714]/.test(tl) || /\[x\]/i.test(tl);
+            var isFailed = /[\u2717\u2718]/.test(tl) || /\[X\]/.test(tl) && /fail|error/i.test(tl);
+            var isSummary = /^\.\.\.\s*\+\d+/.test(tl);
+            if (isSummary) {
+              taskItem.className = 'task-summary';
+              taskItem.textContent = tl.replace(/^\.\.\.?\s*/, '');
+            } else {
+              taskItem.className = 'task-item' + (isDone ? ' done' : '') + (isFailed ? ' failed' : '');
+              var taskCheck = document.createElement('span');
+              taskCheck.className = 'task-check';
+              taskCheck.textContent = isDone ? '\u2713' : (isFailed ? '\u2717' : '\u25CB');
+              var taskText = document.createElement('span');
+              taskText.className = 'task-text';
+              // Clean the text: remove checkmark chars, checkbox syntax
+              var cleanTask = tl.replace(/[\u2713\u2714\u2717\u2718]/g, '').replace(/^- \[[ xX]\]\s*/, '').replace(/\.\.\.\s*$/, '...').trim();
+              taskText.textContent = cleanTask;
+              taskItem.appendChild(taskCheck);
+              taskItem.appendChild(taskText);
+            }
+            taskList.appendChild(taskItem);
+            li++;
+          }
+          frag.appendChild(taskList);
+          continue;
+        }
         var pLines = [];
         while (li < groupLines.length &&
                !groupLines[li].match(/^#{1,3}\s+/) &&
                !/^[-*]{3,}\s*$/.test(groupLines[li]) &&
                !/^[\-*]\s+/.test(groupLines[li]) &&
-               !/^\d+\.\s+/.test(groupLines[li])) {
+               !/^\d+\.\s+/.test(groupLines[li]) &&
+               !taskRe.test(groupLines[li]) &&
+               !/\.\.\.\s*[\u2713\u2714]/.test(groupLines[li])) {
           pLines.push(groupLines[li]);
           li++;
         }
@@ -1681,6 +1717,7 @@
     if (text) {
       sendMessage(text);
       textInput.value = '';
+      textInput.style.height = 'auto';
       toggleSendMic();
     }
   });
@@ -1692,6 +1729,7 @@
       if (text) {
         sendMessage(text);
         textInput.value = '';
+        textInput.style.height = 'auto';
         toggleSendMic();
       }
     }

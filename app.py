@@ -300,7 +300,7 @@ def parse_messages(output: str) -> list[dict]:
         r"Agent|Skill|Task\w*|Tool\w*|Notebook\w*|Search?)\("
     )
     _BG_CMD_RE = re.compile(r"Background command ")
-    _WIBBLE_RE = re.compile(r"^\w+ing\.\.\.\s*\(\d+s\)")
+    _WIBBLE_RE = re.compile(r"^\w+ing(?:\.\.\.|…)\s*\(\d+s\)")
 
     def _is_visible(m):
         if not m.get("content", "").strip() and m["role"] != "tool":

@@ -488,6 +488,70 @@ body {
   white-space: nowrap;
 }
 
+/* ===== Task/checklist items ===== */
+.task-list {
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.03);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+.task-item.done {
+  opacity: 0.75;
+}
+.task-item.failed {
+  opacity: 0.8;
+}
+.task-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  border-radius: 50%;
+  margin-top: 1px;
+}
+.task-item.done .task-check {
+  color: var(--green);
+  background: rgba(50, 215, 75, 0.12);
+}
+.task-item.failed .task-check {
+  color: var(--red);
+  background: rgba(255, 69, 58, 0.12);
+}
+.task-item:not(.done):not(.failed) .task-check {
+  color: var(--text-muted);
+  border: 1.5px solid var(--border-medium);
+}
+.task-text {
+  flex: 1;
+  min-width: 0;
+}
+.task-item.done .task-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-muted);
+}
+.task-summary {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  font-style: italic;
+}
+:root[data-theme="light"] .task-item {
+  background: rgba(0,0,0,0.03);
+}
+
 .msg-assistant-text .code-block {
   display: block;
   background: var(--code-bg);
