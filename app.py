@@ -26,7 +26,9 @@ SOCKET = os.environ.get("TMUX_SOCKET", "/tmp/tmux-1000/default")
 # ---------------------------------------------------------------------------
 PIN_HASH = os.environ.get("PIN_HASH", "")  # SHA-256 hex digest of the PIN
 AUTH_ENABLED = bool(PIN_HASH)
-valid_tokens: set[str] = set()
+valid_tokens: dict[str, float] = {}  # token -> creation timestamp
+TOKEN_TTL = 86400  # 24 hours
+TOKEN_MAX = 50
 CLAUDE_DATA_DIR = os.environ.get("CLAUDE_DATA_DIR", "/claude-data")
 LITELLM_URL = "http://host.docker.internal:4000/v1/chat/completions"
 
@@ -128,15 +130,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path in ("/api/auth", "/api/auth/check") or path == "/health":
             return await call_next(request)
-        if path.startswith("/api/uploads/"):
-            return await call_next(request)
+        # uploads no longer exempt -- require auth like all /api/ routes
 
         # Check Bearer token
         auth_header = request.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
-            if token in valid_tokens:
+            if token in valid_tokens and (time.time() - valid_tokens[token]) < TOKEN_TTL:
                 return await call_next(request)
+            elif token in valid_tokens:
+                del valid_tokens[token]  # expired
 
         return JSONResponse({"detail": "Unauthorized"}, status_code=401)
 
@@ -565,7 +568,12 @@ async def auth_login(body: AuthBody):
     if pin_hash != PIN_HASH:
         raise HTTPException(status_code=401, detail="Invalid PIN")
     token = secrets.token_hex(32)
-    valid_tokens.add(token)
+    valid_tokens[token] = time.time()
+    # Prune oldest if over limit
+    if len(valid_tokens) > TOKEN_MAX:
+        oldest = sorted(valid_tokens, key=valid_tokens.get)
+        for old in oldest[:len(valid_tokens) - TOKEN_MAX]:
+            del valid_tokens[old]
     return {"token": token}
 
 
@@ -576,7 +584,7 @@ async def auth_check(request: Request):
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        if token in valid_tokens:
+        if token in valid_tokens and (time.time() - valid_tokens[token]) < TOKEN_TTL:
             return {"authenticated": True}
     raise HTTPException(status_code=401, detail="Unauthorized")
 
