@@ -953,7 +953,7 @@ async def dismiss_session(name: str):
             preview = asst[-1]["content"][:200]
     except RuntimeError:
         pass
-    _add_to_history(name, session_title, preview)
+    await _add_to_history(name, session_title, preview)
 
     run_tmux("kill-session", "-t", name)
     return {"dismissed": True}
@@ -1077,43 +1077,25 @@ async def serve_upload(filename: str):
 # Session history
 # ---------------------------------------------------------------------------
 
-HISTORY_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "history.json")
-HISTORY_MAX = 50
-
-
-def _load_history() -> list[dict]:
-    try:
-        with open(HISTORY_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_history(entries: list[dict]) -> None:
-    os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
-    tmp = HISTORY_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(entries[-HISTORY_MAX:], f)
-    os.replace(tmp, HISTORY_FILE)
-
-
-def _add_to_history(name: str, title: str, preview: str) -> None:
-    entries = _load_history()
-    entries.append({
-        "name": name,
-        "title": title,
-        "preview": preview[:200] if preview else "",
-        "dismissed_at": int(time.time() * 1000),
-    })
-    _save_history(entries[-HISTORY_MAX:])
+async def _add_to_history(name: str, title: str, preview: str):
+    await db.execute(
+        "INSERT INTO history (session_name, title, preview, dismissed_at) VALUES (?, ?, ?, ?)",
+        (name, title, preview[:200], int(time.time() * 1000))
+    )
+    await db.execute("""
+        DELETE FROM history WHERE id NOT IN (
+            SELECT id FROM history ORDER BY dismissed_at DESC LIMIT 50
+        )
+    """)
+    await db.commit()
 
 
 @app.get("/api/history")
 async def get_history():
-    """Return the last 20 dismissed sessions."""
-    entries = _load_history()
-    # Return most recent first, limited to 20
-    return entries[-20:][::-1]
+    async with db.execute(
+        "SELECT session_name as name, title, preview, dismissed_at FROM history ORDER BY dismissed_at DESC LIMIT 20"
+    ) as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
 
 
 # ---------------------------------------------------------------------------
