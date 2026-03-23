@@ -229,7 +229,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path in ("/api/auth", "/api/auth/check") or path == "/health":
             return await call_next(request)
-        # uploads no longer exempt -- require auth like all /api/ routes
+        # WebSocket endpoints handle their own auth via query param
+        if path.endswith("/ws"):
+            return await call_next(request)
 
         # Check Bearer token
         auth_header = request.headers.get("authorization", "")
