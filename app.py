@@ -9,6 +9,7 @@ import asyncio
 import time
 import httpx
 import yaml
+import aiosqlite
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
 from fastapi.responses import JSONResponse, FileResponse, Response
@@ -70,6 +71,8 @@ http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
 TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
+DB_PATH = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "claude-chat.db")
+db: aiosqlite.Connection | None = None
 _title_lock = asyncio.Lock()
 
 
@@ -81,23 +84,107 @@ def _save_titles():
     os.replace(tmp, TITLES_FILE)
 
 
+async def init_db():
+    global db
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    await db.executescript("""
+        CREATE TABLE IF NOT EXISTS titles (
+            session_name TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            title TEXT,
+            preview TEXT,
+            dismissed_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool TEXT,
+            tool_results TEXT,
+            ts INTEGER,
+            content_hash TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_name);
+        CREATE INDEX IF NOT EXISTS idx_messages_content ON messages(content);
+        CREATE INDEX IF NOT EXISTS idx_history_dismissed ON history(dismissed_at);
+    """)
+    await db.commit()
+
+
+async def _migrate_json_to_sqlite():
+    """One-time migration from JSON files to SQLite."""
+    titles_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
+    if os.path.exists(titles_file):
+        try:
+            with open(titles_file) as f:
+                raw = json.load(f)
+            for name, val in raw.items():
+                title = val.get("title", val) if isinstance(val, dict) else val
+                await db.execute(
+                    "INSERT OR IGNORE INTO titles (session_name, title) VALUES (?, ?)",
+                    (name, title)
+                )
+            await db.commit()
+            os.rename(titles_file, titles_file + ".migrated")
+        except Exception:
+            pass
+
+    history_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "history.json")
+    if os.path.exists(history_file):
+        try:
+            with open(history_file) as f:
+                entries = json.load(f)
+            for e in entries:
+                await db.execute(
+                    "INSERT INTO history (session_name, title, preview, dismissed_at) VALUES (?, ?, ?, ?)",
+                    (e.get("name", ""), e.get("title", ""), e.get("preview", ""), e.get("dismissed_at", 0))
+                )
+            await db.commit()
+            os.rename(history_file, history_file + ".migrated")
+        except Exception:
+            pass
+
+    settings_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "settings.json")
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file) as f:
+                data = json.load(f)
+            for key, val in data.items():
+                await db.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                    (key, json.dumps(val))
+                )
+            await db.commit()
+            os.rename(settings_file, settings_file + ".migrated")
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
     http_client = httpx.AsyncClient(timeout=10.0)
-    # Load persisted titles and tags
-    if os.path.exists(TITLES_FILE):
-        try:
-            with open(TITLES_FILE) as f:
-                raw = json.load(f)
-            for name, val in raw.items():
-                if isinstance(val, dict):
-                    title_cache[name] = val.get("title", name)
-                else:
-                    title_cache[name] = val
-        except Exception:
-            pass
+    await init_db()
+    await _migrate_json_to_sqlite()
+    # Load titles into in-memory cache from SQLite
+    async with db.execute("SELECT session_name, title FROM titles") as cursor:
+        async for row in cursor:
+            title_cache[row["session_name"]] = row["title"]
     yield
+    if db:
+        await db.close()
     await http_client.aclose()
 
 
