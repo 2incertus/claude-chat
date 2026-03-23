@@ -1582,6 +1582,32 @@
     chatFeed.appendChild(block);
   }
 
+  function tryCreateImagePreview(content) {
+    // Detect uploaded image paths -- strip newlines since tmux wraps mid-filename
+    var cleaned = content.replace(/\n/g, '');
+    var match = cleaned.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
+    if (!match) return null;
+    var img = document.createElement('img');
+    img.className = 'msg-image';
+    img.alt = match[1];
+    img.loading = 'lazy';
+    (function(el, filename) {
+      authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
+        if (r.ok) return r.blob();
+      }).then(function(blob) {
+        if (blob) {
+          var url = URL.createObjectURL(blob);
+          el.src = url;
+          el.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showImageOverlay(url);
+          });
+        }
+      });
+    })(img, match[1]);
+    return img;
+  }
+
   function appendMessage(m, animate, allMsgs, msgIdx) {
     var el;
     if (m.role === 'user') {
@@ -1603,31 +1629,7 @@
       } else {
         el.appendChild(renderMarkdown(userContent));
       }
-      // Detect uploaded image paths and show inline preview
-      // tmux wraps long lines mid-filename, so strip newlines before matching
-      var imgMatch = userContent.replace(/\n/g, '').match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
-      var imgEl = null;
-      if (imgMatch) {
-        imgEl = document.createElement('img');
-        imgEl.className = 'msg-image';
-        imgEl.alt = imgMatch[1];
-        imgEl.loading = 'lazy';
-        // Load via authFetch to send Bearer token
-        (function(img, filename) {
-          authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
-            if (r.ok) return r.blob();
-          }).then(function(blob) {
-            if (blob) {
-              var url = URL.createObjectURL(blob);
-              img.src = url;
-              img.addEventListener('click', function(e) {
-                e.stopPropagation();
-                showImageOverlay(url);
-              });
-            }
-          });
-        })(imgEl, imgMatch[1]);
-      }
+      var imgEl = tryCreateImagePreview(userContent);
       if (m._pending) {
         var statusEl = document.createElement('div');
         statusEl.className = 'msg-status msg-status-pending';
@@ -1774,6 +1776,9 @@
         textSpan.className = 'msg-assistant-text';
         textSpan.appendChild(renderMarkdown(content));
         el.appendChild(textSpan);
+        // Show inline image preview if message references an uploaded file
+        var aImgEl = tryCreateImagePreview(content);
+        if (aImgEl) el.appendChild(aImgEl);
         var actions = document.createElement('div');
         actions.className = 'msg-actions';
         var msgCopyBtn = document.createElement('button');
@@ -3643,22 +3648,6 @@
       return;
     }
   });
-
-  // ========== iOS Keyboard Viewport Fix ==========
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', function() {
-      var vv = window.visualViewport;
-      document.documentElement.style.height = vv.height + 'px';
-      // Scroll to keep input visible without pushing header off screen
-      if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') {
-        document.activeElement.scrollIntoView({ block: 'nearest' });
-      }
-    });
-    window.visualViewport.addEventListener('scroll', function() {
-      // Prevent iOS from scrolling the fixed layout
-      window.scrollTo(0, 0);
-    });
-  }
 
   // ========== Init ==========
   function initApp() {
