@@ -66,20 +66,38 @@ TOOL_CALL_RE = re.compile(
 # ---------------------------------------------------------------------------
 http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
+tag_cache: dict[str, list[str]] = {}
 death_cache: dict[str, float] = {}
 TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
 _title_lock = asyncio.Lock()
+
+
+def _save_titles():
+    """Persist title_cache and tag_cache to disk atomically."""
+    data = {}
+    for name, title in title_cache.items():
+        data[name] = {"title": title, "tags": tag_cache.get(name, [])}
+    tmp = TITLES_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, TITLES_FILE)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
     http_client = httpx.AsyncClient(timeout=10.0)
-    # Load persisted titles
+    # Load persisted titles and tags
     if os.path.exists(TITLES_FILE):
         try:
             with open(TITLES_FILE) as f:
-                title_cache.update(json.load(f))
+                raw = json.load(f)
+            for name, val in raw.items():
+                if isinstance(val, dict):
+                    title_cache[name] = val.get("title", name)
+                    tag_cache[name] = val.get("tags", [])
+                else:
+                    title_cache[name] = val
         except Exception:
             pass
     yield
@@ -384,11 +402,11 @@ def time_ago(epoch_ms: int) -> str:
     return f"{int(delta // 86400)}d ago"
 
 
-async def generate_title(session_name: str, messages: list[dict]) -> str:
-    """Generate a short title from the first 3 user messages via LiteLLM."""
+async def generate_title(session_name: str, messages: list[dict]) -> tuple[str, list[str]]:
+    """Generate a short title and tags from the first 3 user messages via LiteLLM."""
     user_msgs = [m for m in messages if m["role"] == "user"][:3]
     if not user_msgs:
-        return session_name
+        return session_name, []
 
     prompt_content = "\n".join(m["content"] for m in user_msgs)
     try:
@@ -396,13 +414,15 @@ async def generate_title(session_name: str, messages: list[dict]) -> str:
             LITELLM_URL,
             json={
                 "model": "glm-4.5-air",
-                "max_tokens": 20,
+                "max_tokens": 60,
                 "messages": [
                     {
                         "role": "system",
                         "content": (
-                            "Generate a very short title (max 5 words) for this conversation. "
-                            "Reply with ONLY the title, no punctuation or quotes."
+                            "Generate a short title (max 6 words) and 1-3 tags for this AI coding conversation. "
+                            "Tags should be lowercase single words like: python, docker, frontend, debug, refactor, "
+                            "deploy, test, api, css, database, infra, review. "
+                            "Respond EXACTLY in format:\nTITLE: <title>\nTAGS: <tag1>, <tag2>"
                         ),
                     },
                     {"role": "user", "content": prompt_content},
@@ -412,18 +432,34 @@ async def generate_title(session_name: str, messages: list[dict]) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()[:60]
+        raw_reply = data["choices"][0]["message"]["content"].strip()
+        # Parse structured response
+        title = session_name
+        tags: list[str] = []
+        for line in raw_reply.splitlines():
+            line = line.strip()
+            if line.upper().startswith("TITLE:"):
+                title = line[6:].strip().strip('"\'')[:60]
+            elif line.upper().startswith("TAGS:"):
+                tags = [t.strip().lower().strip('#') for t in line[5:].split(",") if t.strip()]
+                tags = [t for t in tags if t][:3]
+        if not title or title == session_name:
+            # Fallback: treat entire reply as title
+            title = raw_reply.splitlines()[0].strip()[:60]
+        return title, tags
     except Exception:
         # fallback: first user message truncated
-        return (user_msgs[0]["content"][:50] if user_msgs else session_name)
+        return (user_msgs[0]["content"][:50] if user_msgs else session_name), []
 
 
 async def _refresh_title(session_name: str, messages: list[dict]) -> None:
-    """Background task: generate title and cache it."""
+    """Background task: generate title and tags, then cache them."""
     if session_name in title_cache:
         return
-    title = await generate_title(session_name, messages)
+    title, tags = await generate_title(session_name, messages)
     title_cache[session_name] = title
+    tag_cache[session_name] = tags
+    _save_titles()
 
 
 COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
@@ -623,6 +659,7 @@ async def list_sessions():
                 "state": "dead",
                 "preview": preview,
                 "cost_info": cost_info,
+                "tags": tag_cache.get(name, []),
             })
             continue
 
@@ -648,6 +685,7 @@ async def list_sessions():
             "state": "active",
             "preview": preview,
             "cost_info": extract_cost_info(raw),
+            "tags": tag_cache.get(name, []),
         })
 
     return result
@@ -867,15 +905,7 @@ async def set_session_title(name: str, body: dict):
     title_cache[name] = title[:60]
     async with _title_lock:
         try:
-            existing = {}
-            if os.path.exists(TITLES_FILE):
-                with open(TITLES_FILE) as f:
-                    existing = json.load(f)
-            existing[name] = title[:60]
-            tmp = TITLES_FILE + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(existing, f)
-            os.replace(tmp, TITLES_FILE)
+            _save_titles()
         except Exception:
             pass
     return {"title": title_cache[name]}
