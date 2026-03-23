@@ -83,6 +83,24 @@ async def _save_title(session_name: str, title: str):
     await db.commit()
 
 
+async def _index_messages(session_name: str, messages: list[dict], chash: str):
+    """Index messages for search. Idempotent via content_hash."""
+    async with db.execute(
+        "SELECT 1 FROM messages WHERE session_name = ? AND content_hash = ? LIMIT 1",
+        (session_name, chash)
+    ) as cursor:
+        if await cursor.fetchone():
+            return
+    await db.execute("DELETE FROM messages WHERE session_name = ?", (session_name,))
+    for m in messages:
+        await db.execute(
+            "INSERT INTO messages (session_name, role, content, tool, tool_results, ts, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_name, m["role"], m["content"], m.get("tool", ""),
+             json.dumps(m.get("tool_results", [])), m.get("ts", 0), chash)
+        )
+    await db.commit()
+
+
 async def init_db():
     global db
     db = await aiosqlite.connect(DB_PATH)
@@ -767,6 +785,8 @@ async def get_session(name: str, lines: int = 10000):
     status = get_session_status(raw)
     cost_info = extract_cost_info(raw)
 
+    asyncio.create_task(_index_messages(name, messages, chash))
+
     return {
         "name": name,
         "title": title,
@@ -993,6 +1013,7 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
         }
 
     messages = parse_messages(raw)
+    asyncio.create_task(_index_messages(name, messages, chash))
     return {
         "has_changes": True,
         "content_hash": chash,
@@ -1096,6 +1117,31 @@ async def get_history():
         "SELECT session_name as name, title, preview, dismissed_at FROM history ORDER BY dismissed_at DESC LIMIT 20"
     ) as cursor:
         return [dict(row) for row in await cursor.fetchall()]
+
+
+@app.get("/api/search")
+async def search_messages(q: str = "", limit: int = 20):
+    if not q or len(q) < 2:
+        return {"results": []}
+    async with db.execute("""
+        SELECT m.session_name, m.role, m.content, m.ts,
+               t.title as session_title
+        FROM messages m
+        LEFT JOIN titles t ON t.session_name = m.session_name
+        WHERE m.content LIKE ?
+        ORDER BY m.ts DESC
+        LIMIT ?
+    """, (f"%{q}%", limit)) as cursor:
+        results = []
+        for row in await cursor.fetchall():
+            results.append({
+                "session": row["session_name"],
+                "session_title": row["session_title"] or row["session_name"],
+                "role": row["role"],
+                "snippet": row["content"][:150],
+                "ts": row["ts"],
+            })
+        return {"results": results}
 
 
 # ---------------------------------------------------------------------------

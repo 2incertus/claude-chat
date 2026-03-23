@@ -3682,6 +3682,89 @@
     if (starFilterBtn) starFilterBtn.click();
   });
 
+  // ========== Global Search Modal ==========
+  var searchBackdrop = document.getElementById('searchBackdrop');
+  var searchPanel = document.getElementById('searchPanel');
+  var globalSearchInput = document.getElementById('globalSearchInput');
+  var searchResults = document.getElementById('searchResults');
+
+  function openGlobalSearch() {
+    searchBackdrop.classList.add('visible');
+    searchPanel.classList.add('visible');
+    globalSearchInput.value = '';
+    searchResults.innerHTML = '';
+    setTimeout(function() { globalSearchInput.focus(); }, 100);
+  }
+
+  function closeGlobalSearch() {
+    searchBackdrop.classList.remove('visible');
+    searchPanel.classList.remove('visible');
+  }
+
+  searchBackdrop.addEventListener('click', closeGlobalSearch);
+
+  var globalSearchTimer = null;
+  globalSearchInput.addEventListener('input', function() {
+    clearTimeout(globalSearchTimer);
+    var q = globalSearchInput.value.trim();
+    if (q.length < 2) { searchResults.innerHTML = ''; return; }
+    globalSearchTimer = setTimeout(function() {
+      authFetch('/api/search?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          searchResults.innerHTML = '';
+          if (!data.results || data.results.length === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'search-empty';
+            empty.textContent = 'No results found';
+            searchResults.appendChild(empty);
+            return;
+          }
+          data.results.forEach(function(r) {
+            var el = document.createElement('div');
+            el.className = 'search-result';
+            var header = document.createElement('div');
+            header.className = 'search-result-header';
+            var session = document.createElement('span');
+            session.className = 'search-result-session';
+            session.textContent = r.session_title;
+            var role = document.createElement('span');
+            role.className = 'search-result-role';
+            role.textContent = r.role;
+            header.appendChild(session);
+            header.appendChild(role);
+            var snippet = document.createElement('div');
+            snippet.className = 'search-result-snippet';
+            snippet.textContent = r.snippet;
+            el.appendChild(header);
+            el.appendChild(snippet);
+            el.addEventListener('click', function() {
+              closeGlobalSearch();
+              showSessionView(r.session);
+            });
+            searchResults.appendChild(el);
+          });
+        });
+    }, 300);
+  });
+
+  // Long-press on search toggle opens global search
+  var searchLongPress = null;
+  searchToggleBtn.addEventListener('mousedown', function() {
+    searchLongPress = setTimeout(function() {
+      searchLongPress = 'fired';
+      openGlobalSearch();
+    }, 500);
+  });
+  searchToggleBtn.addEventListener('mouseup', function() {
+    if (searchLongPress !== 'fired') clearTimeout(searchLongPress);
+    searchLongPress = null;
+  });
+  searchToggleBtn.addEventListener('mouseleave', function() {
+    if (searchLongPress !== 'fired') clearTimeout(searchLongPress);
+    searchLongPress = null;
+  });
+
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
     var tag = (e.target.tagName || '').toLowerCase();
@@ -3690,10 +3773,27 @@
     var newSessionOpen = newSessionPanel.classList.contains('visible');
     var historyOpen = historyPanel.classList.contains('visible');
     var shortcutsOpen = shortcutsPanel.classList.contains('visible');
+    var globalSearchOpen = searchPanel.classList.contains('visible');
     var paletteOpen = cmdPalette.classList.contains('visible');
+
+    // Ctrl/Cmd+Shift+F: open global search
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'F') {
+      e.preventDefault();
+      if (globalSearchOpen) {
+        closeGlobalSearch();
+      } else {
+        openGlobalSearch();
+      }
+      return;
+    }
 
     // Escape: close settings/new-session/command-palette, or go back to session list
     if (e.key === 'Escape') {
+      if (globalSearchOpen) {
+        closeGlobalSearch();
+        e.preventDefault();
+        return;
+      }
       if (shortcutsOpen) {
         closeShortcuts();
         e.preventDefault();
