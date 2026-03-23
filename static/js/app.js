@@ -199,6 +199,7 @@
   var uploadToast = document.getElementById('uploadToast');
   var bellBtn = document.getElementById('bellBtn');
   var refreshBtn = document.getElementById('refreshBtn');
+  var copyAllBtn = document.getElementById('copyAllBtn');
   var gearBtn = document.getElementById('gearBtn');
   var settingsBackdrop = document.getElementById('settingsBackdrop');
   var settingsPanel = document.getElementById('settingsPanel');
@@ -2376,6 +2377,41 @@
     });
   }
 
+  // Copy full conversation as markdown
+  function copyConversation() {
+    if (!currentSession) return;
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var messages = (data.conversation || data.messages || []);
+        var title = data.title || data.name || currentSession;
+        var md = '# ' + title + '\n';
+        for (var i = 0; i < messages.length; i++) {
+          var m = messages[i];
+          md += '\n';
+          if (m.role === 'tool') {
+            md += '**' + (m.tool || 'Tool') + '**';
+            if (m.content) md += ' ' + m.content;
+            md += '\n';
+            if (m.tool_results && m.tool_results.length) {
+              for (var j = 0; j < m.tool_results.length; j++) {
+                md += '  ' + m.tool_results[j] + '\n';
+              }
+            }
+          } else {
+            var label = m.role === 'user' ? 'User' : 'Assistant';
+            md += '**' + label + ':**\n' + (m.content || '') + '\n';
+          }
+        }
+        copyToClipboard(md);
+      })
+      .catch(function() {
+        showActionToast('Failed to copy', 'error');
+      });
+  }
+
+  copyAllBtn.addEventListener('click', copyConversation);
+
   // Force refresh button
   refreshBtn.addEventListener('click', function() {
     refreshBtn.style.animation = 'btnSpin 0.5s linear';
@@ -3108,6 +3144,13 @@
         e.preventDefault();
         return;
       }
+    }
+
+    // Ctrl/Cmd+Shift+C: copy full conversation as markdown
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      copyConversation();
+      return;
     }
 
     // Don't handle other shortcuts when typing in inputs
