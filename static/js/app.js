@@ -848,7 +848,56 @@
 
       wrapper.appendChild(card);
 
-      // Swipe + long-press gestures
+      // Desktop: right-click context menu (replaces swipe actions)
+      if (isDesktop()) {
+        (function(session, cardEl) {
+          cardEl.addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+            // Remove any existing context menu
+            var old = document.querySelector('.ctx-menu');
+            if (old) old.remove();
+
+            var menu = document.createElement('div');
+            menu.className = 'ctx-menu';
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+
+            var items = [];
+            if (session.state === 'dead') {
+              items.push({ label: 'Dismiss', action: function() { dismissSession(session.name); } });
+              items.push({ label: 'Respawn', action: function() { respawnSession(session.name); } });
+            } else {
+              items.push({ label: 'Kill', cls: 'danger', action: function() { killSession(session.name); } });
+            }
+            items.push({ label: pinned.indexOf(session.name) >= 0 ? 'Unpin' : 'Pin', action: function() { togglePin(session.name); } });
+            if (typeof showFolderPicker === 'function') {
+              items.push({ label: 'Move to folder', action: function() { showFolderPicker(session.name, cardEl); } });
+            }
+
+            items.forEach(function(item) {
+              var btn = document.createElement('button');
+              btn.className = 'ctx-menu-item' + (item.cls ? ' ' + item.cls : '');
+              btn.textContent = item.label;
+              btn.addEventListener('click', function() {
+                menu.remove();
+                item.action();
+              });
+              menu.appendChild(btn);
+            });
+
+            document.body.appendChild(menu);
+
+            // Close on click outside
+            var closeMenu = function() {
+              menu.remove();
+              document.removeEventListener('click', closeMenu);
+            };
+            setTimeout(function() { document.addEventListener('click', closeMenu); }, 0);
+          });
+        })(s, card);
+      }
+
+      // Swipe + long-press gestures (mobile only)
       var startX = 0, currentX = 0, swiping = false;
       var cardLongPress = null;
       var longPressTriggered = false;

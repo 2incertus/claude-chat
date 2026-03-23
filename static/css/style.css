@@ -2022,6 +2022,36 @@ button:focus-visible { outline-offset: -2px; }
     padding-left: 4px;
   }
 
+  /* Desktop right-click context menu */
+  .ctx-menu {
+    position: fixed;
+    background: var(--surface);
+    border: 1px solid var(--border-medium);
+    border-radius: 8px;
+    padding: 4px 0;
+    min-width: 160px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+    z-index: 200;
+  }
+  .ctx-menu-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 0.82rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .ctx-menu-item:hover {
+    background: var(--overlay-hover);
+  }
+  .ctx-menu-item.danger {
+    color: var(--red);
+  }
+
   /* Hide swipe actions on desktop -- mobile-only pattern */
   .swipe-actions {
     display: none;
