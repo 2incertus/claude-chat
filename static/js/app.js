@@ -1133,23 +1133,20 @@
 
   function updateCostBadge(costInfo) {
     if (!costBadge) return;
-    if (!costInfo) {
+    if (!currentSession) {
       costBadge.style.display = 'none';
       return;
     }
     var parts = [];
-    if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% ctx');
-    if (costInfo.usage_5h != null) parts.push('5h ' + costInfo.usage_5h + '%');
-    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
-    if (parts.length === 0) {
-      costBadge.style.display = 'none';
-      return;
+    if (costInfo) {
+      if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% ctx');
+      if (costInfo.usage_5h != null) parts.push('5h ' + costInfo.usage_5h + '%');
+      if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
     }
-    costBadge.textContent = parts.join(' \u00b7 ');
+    costBadge.textContent = parts.length > 0 ? parts.join(' \u00b7 ') : '\u2014';
     costBadge.style.display = '';
     // Color-code by context REMAINING: high = good, low = warning
-    // Use darker colors that work on both light and dark themes
-    var pct = costInfo.context_pct;
+    var pct = costInfo && costInfo.context_pct;
     if (pct != null) {
       var color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#ca8a04' : pct >= 20 ? '#ea580c' : '#dc2626';
       costBadge.style.color = color;

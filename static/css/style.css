@@ -151,15 +151,16 @@ body {
   padding: 0 8px;
 }
 .cost-badge {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   color: var(--text-muted);
   background: var(--surface2);
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 3px 7px;
+  border-radius: 5px;
   border: 1px solid var(--border-medium);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   margin-left: auto;
+  flex-shrink: 0;
 }
 /* cost badge sits inline in special-keys row */
 .status-dot {
@@ -1132,24 +1133,24 @@ body {
 /* Special keys toolbar fills the safe area */
 .special-keys {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   padding: 4px 0 4px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
+  flex-wrap: nowrap;
 }
 .special-key {
   flex-shrink: 0;
-  padding: 4px 12px;
-  border-radius: 6px;
+  padding: 3px 8px;
+  border-radius: 5px;
   background: var(--surface2);
   border: 1px solid var(--border-medium);
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 600;
   cursor: pointer;
   touch-action: manipulation;
-  min-height: 28px;
+  min-height: 24px;
   min-width: 40px;
   display: flex;
   align-items: center;
