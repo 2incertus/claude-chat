@@ -446,6 +446,48 @@ body {
   color: var(--red);
 }
 
+/* ===== Quick-reply buttons ===== */
+.quick-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.quick-reply-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-medium);
+  border-radius: 16px;
+  color: var(--text);
+  font-size: 0.78rem;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background 100ms, border-color 100ms;
+  min-height: 36px;
+}
+.quick-reply-btn:active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.quick-reply-num {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+.quick-reply-btn:active .quick-reply-num { color: white; }
+.quick-reply-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .msg-assistant-text .code-block {
   display: block;
   background: var(--code-bg);

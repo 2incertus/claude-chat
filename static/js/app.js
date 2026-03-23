@@ -1101,6 +1101,41 @@
         })(content, ttsBtn);
         actions.appendChild(ttsBtn);
         el.appendChild(actions);
+
+        // Detect numbered options for quick-reply buttons
+        // Match patterns like "1. Option text" or "1) Option text"
+        var optionLines = content.match(/^[\s]*(\d+)[.)]\s+.+/gm);
+        if (optionLines && optionLines.length >= 2 && optionLines.length <= 8) {
+          var quickReplies = document.createElement('div');
+          quickReplies.className = 'quick-replies';
+          for (var qi = 0; qi < optionLines.length; qi++) {
+            var optMatch = optionLines[qi].match(/^\s*(\d+)[.)]\s+(.+)/);
+            if (optMatch) {
+              var qBtn = document.createElement('button');
+              qBtn.className = 'quick-reply-btn';
+              var qNum = document.createElement('span');
+              qNum.className = 'quick-reply-num';
+              qNum.textContent = optMatch[1];
+              var qText = document.createElement('span');
+              qText.className = 'quick-reply-text';
+              var optText = optMatch[2].trim();
+              qText.textContent = optText.length > 50 ? optText.substring(0, 50) + '\u2026' : optText;
+              qBtn.appendChild(qNum);
+              qBtn.appendChild(qText);
+              (function(num) {
+                qBtn.addEventListener('click', function(e) {
+                  e.stopPropagation();
+                  if (currentSession) {
+                    sendMessage(num);
+                  }
+                });
+              })(optMatch[1]);
+              quickReplies.appendChild(qBtn);
+            }
+          }
+          el.appendChild(quickReplies);
+        }
+
         if (!animate) el.style.animation = 'none';
       }
     } else if (m.role === 'tool') {
