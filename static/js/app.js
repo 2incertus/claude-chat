@@ -2816,13 +2816,25 @@
           var name = document.createElement('div');
           name.className = 'preset-card-name';
           name.textContent = p.name;
+          if (p.mode) {
+            var badge = document.createElement('span');
+            badge.className = 'preset-mode-badge mode-' + p.mode;
+            badge.textContent = p.mode;
+            name.appendChild(badge);
+          }
+          var desc = document.createElement('div');
+          desc.className = 'preset-card-path';
+          desc.textContent = p.description || '';
           var path = document.createElement('div');
           path.className = 'preset-card-path';
+          path.style.fontSize = '0.75em';
+          path.style.opacity = '0.6';
           path.textContent = p.path;
           card.appendChild(name);
+          if (p.description) card.appendChild(desc);
           card.appendChild(path);
           card.addEventListener('click', function() {
-            createSession(p.path, '');
+            createSession(p.path, '', p.initial_command || '', p.mode || '');
           });
           presetList.appendChild(card);
         });
@@ -2838,13 +2850,16 @@
     newSessionPanel.classList.remove('visible');
   }
 
-  function createSession(path, name) {
+  function createSession(path, name, initialCommand, mode) {
     closeNewSession();
     showActionToast('Creating session...', 'info');
+    var payload = { path: path, name: name };
+    if (initialCommand) payload.initial_command = initialCommand;
+    if (mode) payload.mode = mode;
     authFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path, name: name })
+      body: JSON.stringify(payload)
     })
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); });
@@ -2863,7 +2878,7 @@
   newSessionBackdrop.addEventListener('click', closeNewSession);
   customLaunch.addEventListener('click', function() {
     var p = customPath.value.trim();
-    if (p) createSession(p, '');
+    if (p) createSession(p, '', '', '');
   });
 
   // ========== Settings ==========

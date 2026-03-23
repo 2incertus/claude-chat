@@ -1078,6 +1078,8 @@ async def get_config():
 async def create_session(body: dict):
     path = os.path.realpath(body.get("path", "/home/ubuntu"))
     name = body.get("name", "")
+    initial_command = body.get("initial_command", "")
+    mode = body.get("mode", "")
 
     if not _is_allowed_path(path):
         raise HTTPException(status_code=400, detail=f"Path not allowed: {path}")
@@ -1096,7 +1098,15 @@ async def create_session(body: dict):
     if _session_exists(name):
         raise HTTPException(status_code=409, detail=f"Session {name} already exists")
 
-    run_tmux("new-session", "-d", "-s", name, "-c", path,
-             "/home/ubuntu/.local/bin/claude")
+    claude_cmd = "/home/ubuntu/.local/bin/claude"
+    if mode and mode in ("plan", "code", "ask"):
+        claude_cmd += f" --mode {mode}"
+
+    run_tmux("new-session", "-d", "-s", name, "-c", path, claude_cmd)
+
+    if initial_command:
+        await asyncio.sleep(2)
+        run_tmux("send-keys", "-t", name, "-l", initial_command)
+        run_tmux("send-keys", "-t", name, "Enter")
 
     return {"created": True, "name": name, "path": path}
