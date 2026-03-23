@@ -2044,6 +2044,25 @@
   });
 
   // ========== Search & Filter ==========
+  var searchToggleBtn = document.getElementById('searchToggleBtn');
+  var searchBarEl = document.getElementById('searchBar');
+  searchToggleBtn.addEventListener('click', function() {
+    var visible = searchBarEl.style.display !== 'none';
+    searchBarEl.style.display = visible ? 'none' : '';
+    searchToggleBtn.classList.toggle('active', !visible);
+    if (!visible) {
+      searchInput.focus();
+    } else {
+      // Clear search when hiding
+      searchInput.value = '';
+      activeStatusFilter = 'all';
+      var chips = searchFilters.querySelectorAll('.filter-chip');
+      for (var i = 0; i < chips.length; i++) {
+        chips[i].classList.toggle('active', chips[i].getAttribute('data-filter') === 'all');
+      }
+      loadSessions();
+    }
+  });
   var searchDebounce = null;
   searchInput.addEventListener('input', function() {
     clearTimeout(searchDebounce);
