@@ -486,10 +486,37 @@ body {
   flex-shrink: 0;
 }
 .quick-reply-btn:active .quick-reply-num { color: white; }
+.quick-reply-btn.selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.quick-reply-btn.selected .quick-reply-num { color: white; }
 .quick-reply-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.quick-reply-send-row {
+  display: flex;
+  width: 100%;
+  margin-top: 4px;
+}
+.quick-reply-send-btn {
+  flex: 1;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 16px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  font-family: inherit;
+}
+.quick-reply-send-btn:active {
+  opacity: 0.8;
 }
 
 /* ===== Task/checklist items ===== */

@@ -978,6 +978,10 @@
         continue;
       }
       var groupLines = block.lines;
+      // Trim leading whitespace - tmux output often indents content
+      for (var gi = 0; gi < groupLines.length; gi++) {
+        groupLines[gi] = groupLines[gi].replace(/^\s+/, '');
+      }
       var li = 0;
       while (li < groupLines.length) {
         var gl = groupLines[li];
@@ -1008,6 +1012,8 @@
         }
         if (/^\d+\.\s+/.test(gl)) {
           var ol = document.createElement('ol');
+          var startNum = parseInt(gl.match(/^(\d+)\./)[1], 10);
+          if (startNum !== 1) ol.setAttribute('start', startNum);
           while (li < groupLines.length && /^\d+\.\s+/.test(groupLines[li])) {
             var liEl = document.createElement('li');
             liEl.appendChild(applyInline(groupLines[li].replace(/^\d+\.\s+/, '')));
@@ -1017,7 +1023,7 @@
           frag.appendChild(ol);
           continue;
         }
-        // Task/checklist items: lines with ✓✔✗✘ or - [x]/- [ ] or ending with ... ✓
+        // Task/checklist items: lines with check/cross marks or - [x]/- [ ] or ending with ... check
         var taskRe = /[\u2713\u2714\u2717\u2718]|^- \[[ xX]\]/;
         if (taskRe.test(gl) || /\.\.\.\s*[\u2713\u2714]/.test(gl)) {
           var taskList = document.createElement('div');
@@ -1210,7 +1216,7 @@
         el.appendChild(pill);
         if (cmdArgs) el.appendChild(document.createTextNode(cmdArgs));
       } else {
-        el.textContent = userContent;
+        el.appendChild(renderMarkdown(userContent));
       }
       // Detect uploaded image paths and show inline preview
       var imgMatch = userContent.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
@@ -1377,13 +1383,20 @@
         el.appendChild(actions);
 
         // Detect numbered options for quick-reply buttons
-        // Only show when the message ends with a question (asking user to choose)
+        // Show when message has numbered options AND (ends with ? OR is the last assistant message)
         var contentTrimmed = content.trim();
-        var endsWithQuestion = /\?\s*$/.test(contentTrimmed);
+        var endsWithQuestion = /[?:]\s*$/.test(contentTrimmed);
+        var isLastAssistant = (msgIdx === allMsgs.length - 1) || (function() {
+          for (var ni = msgIdx + 1; ni < allMsgs.length; ni++) {
+            if (allMsgs[ni].role === 'assistant') return false;
+            if (allMsgs[ni].role === 'user') return true;
+          }
+          return true;
+        })();
         var allOptionLines = content.match(/^[\s]*(\d+)[.)]\s+.+/gm);
         // Only use the LAST contiguous numbered sequence (starting from 1)
         var optionLines = null;
-        if (allOptionLines && endsWithQuestion) {
+        if (allOptionLines && (endsWithQuestion || isLastAssistant)) {
           // Walk backwards to find the last sequence starting with "1."
           var lastGroup = [];
           for (var oli = allOptionLines.length - 1; oli >= 0; oli--) {
@@ -1393,16 +1406,25 @@
               if (olMatch[1] === '1') break;
             }
           }
-          if (lastGroup.length >= 2 && lastGroup.length <= 6) optionLines = lastGroup;
+          if (lastGroup.length >= 2 && lastGroup.length <= 12) optionLines = lastGroup;
         }
         if (optionLines) {
           var quickReplies = document.createElement('div');
           quickReplies.className = 'quick-replies';
+          var selectedNums = [];
+          var sendRow = document.createElement('div');
+          sendRow.className = 'quick-reply-send-row';
+          sendRow.style.display = 'none';
+          var sendBtn = document.createElement('button');
+          sendBtn.className = 'quick-reply-send-btn';
+          sendBtn.textContent = 'Send';
+          sendRow.appendChild(sendBtn);
           for (var qi = 0; qi < optionLines.length; qi++) {
             var optMatch = optionLines[qi].match(/^\s*(\d+)[.)]\s+(.+)/);
             if (optMatch) {
               var qBtn = document.createElement('button');
               qBtn.className = 'quick-reply-btn';
+              qBtn.setAttribute('data-num', optMatch[1]);
               var qNum = document.createElement('span');
               qNum.className = 'quick-reply-num';
               qNum.textContent = optMatch[1];
@@ -1412,17 +1434,36 @@
               qText.textContent = optText.length > 50 ? optText.substring(0, 50) + '\u2026' : optText;
               qBtn.appendChild(qNum);
               qBtn.appendChild(qText);
-              (function(num) {
-                qBtn.addEventListener('click', function(e) {
+              (function(num, btn) {
+                btn.addEventListener('click', function(e) {
                   e.stopPropagation();
-                  if (currentSession) {
-                    sendMessage(num);
+                  var idx = selectedNums.indexOf(num);
+                  if (idx === -1) {
+                    selectedNums.push(num);
+                    btn.classList.add('selected');
+                  } else {
+                    selectedNums.splice(idx, 1);
+                    btn.classList.remove('selected');
+                  }
+                  if (selectedNums.length > 0) {
+                    selectedNums.sort(function(a, b) { return parseInt(a) - parseInt(b); });
+                    sendBtn.textContent = 'Send ' + selectedNums.join(', ');
+                    sendRow.style.display = 'flex';
+                  } else {
+                    sendRow.style.display = 'none';
                   }
                 });
-              })(optMatch[1]);
+              })(optMatch[1], qBtn);
               quickReplies.appendChild(qBtn);
             }
           }
+          sendBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (currentSession && selectedNums.length > 0) {
+              sendMessage(selectedNums.join(', '));
+            }
+          });
+          quickReplies.appendChild(sendRow);
           el.appendChild(quickReplies);
         }
 
