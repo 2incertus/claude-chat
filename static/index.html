@@ -119,6 +119,41 @@
   <div id="historyList"></div>
 </div>
 
+<!-- Shortcuts modal -->
+<div class="shortcuts-backdrop" id="shortcutsBackdrop"></div>
+<div class="shortcuts-panel" id="shortcutsPanel">
+  <div class="settings-handle"></div>
+  <h3 class="settings-title">Keyboard Shortcuts</h3>
+  <div class="shortcuts-grid">
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Navigation</div>
+      <div class="shortcut-row"><kbd>Esc</kbd><span>Back / close panel</span></div>
+      <div class="shortcut-row"><kbd>&#8593;</kbd> <kbd>&#8595;</kbd><span>Navigate session list</span></div>
+      <div class="shortcut-row"><kbd>Enter</kbd><span>Open selected session</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Chat</div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; K</kbd><span>Focus message input</span></div>
+      <div class="shortcut-row"><kbd>Enter</kbd><span>Send message</span></div>
+      <div class="shortcut-row"><kbd>Shift Enter</kbd><span>New line</span></div>
+      <div class="shortcut-row"><kbd>/</kbd><span>Open command palette</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Special Keys (sent to session)</div>
+      <div class="shortcut-row"><kbd>Esc</kbd><span>Cancel / dismiss</span></div>
+      <div class="shortcut-row"><kbd>Tab</kbd><span>Accept suggestion</span></div>
+      <div class="shortcut-row"><kbd>&#8679;Tab</kbd><span>Reject suggestion</span></div>
+      <div class="shortcut-row"><kbd>^C</kbd><span>Interrupt</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Quick Access</div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; Shift E</kbd><span>Export conversation</span></div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; Shift C</kbd><span>Copy all messages</span></div>
+      <div class="shortcut-row"><kbd>?</kbd><span>This help panel</span></div>
+    </div>
+  </div>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/static/sw.js').catch(function() {});

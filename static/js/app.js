@@ -2962,6 +2962,8 @@
   var historyBackdrop = document.getElementById('historyBackdrop');
   var historyPanel = document.getElementById('historyPanel');
   var historyList = document.getElementById('historyList');
+  var shortcutsBackdrop = document.getElementById('shortcutsBackdrop');
+  var shortcutsPanel = document.getElementById('shortcutsPanel');
 
   function formatHistoryTime(epochMs) {
     if (!epochMs) return '';
@@ -3041,6 +3043,20 @@
 
   historyBtn.addEventListener('click', openHistory);
   historyBackdrop.addEventListener('click', closeHistory);
+
+  // ========== Shortcuts Modal ==========
+  function openShortcuts() {
+    shortcutsBackdrop.classList.add('visible');
+    shortcutsPanel.classList.add('visible');
+  }
+
+  function closeShortcuts() {
+    shortcutsBackdrop.classList.remove('visible');
+    shortcutsPanel.classList.remove('visible');
+  }
+
+  shortcutsBackdrop.addEventListener('click', closeShortcuts);
+
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
     var tag = (e.target.tagName || '').toLowerCase();
@@ -3048,10 +3064,16 @@
     var settingsOpen = settingsPanel.classList.contains('visible');
     var newSessionOpen = newSessionPanel.classList.contains('visible');
     var historyOpen = historyPanel.classList.contains('visible');
+    var shortcutsOpen = shortcutsPanel.classList.contains('visible');
     var paletteOpen = cmdPalette.classList.contains('visible');
 
     // Escape: close settings/new-session/command-palette, or go back to session list
     if (e.key === 'Escape') {
+      if (shortcutsOpen) {
+        closeShortcuts();
+        e.preventDefault();
+        return;
+      }
       if (settingsOpen) {
         closeSettings();
         e.preventDefault();
@@ -3090,6 +3112,17 @@
 
     // Don't handle other shortcuts when typing in inputs
     if (isInput) return;
+
+    // ?: toggle shortcuts panel
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
+      if (shortcutsOpen) {
+        closeShortcuts();
+      } else {
+        openShortcuts();
+      }
+      e.preventDefault();
+      return;
+    }
 
     // Cmd/Ctrl + K: focus text input
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
