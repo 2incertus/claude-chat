@@ -1212,4 +1212,14 @@ async def create_session(body: dict):
     run_tmux("new-session", "-d", "-s", name, "-c", path,
              "/home/ubuntu/.local/bin/claude")
 
+    # Auto-accept the "trust this folder" prompt after Claude starts
+    async def _accept_trust():
+        await asyncio.sleep(3)
+        try:
+            run_tmux("send-keys", "-t", name, "Enter")
+        except RuntimeError:
+            pass  # session may have died
+
+    asyncio.create_task(_accept_trust())
+
     return {"created": True, "name": name, "path": path}
