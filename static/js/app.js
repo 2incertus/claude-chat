@@ -1138,10 +1138,9 @@
       return;
     }
     var parts = [];
-    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
     if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% ctx');
     if (costInfo.usage_5h != null) parts.push('5h ' + costInfo.usage_5h + '%');
-    if (costInfo.usage_7d != null) parts.push('7d ' + costInfo.usage_7d + '%');
+    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
     if (parts.length === 0) {
       costBadge.style.display = 'none';
       return;
