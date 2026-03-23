@@ -971,6 +971,36 @@ async def respawn_session(name: str):
     return {"respawned": True}
 
 
+@app.get("/api/sessions/{name}/health")
+async def session_health(name: str):
+    """Check if a session is healthy and Claude is ready for input."""
+    validate_session_name(name)
+    if not _session_exists(name):
+        return {"exists": False, "ready": False, "status": "not_found"}
+
+    is_claude = _is_claude_session(name)
+    if not is_claude:
+        return {"exists": True, "ready": False, "status": "dead", "message": "Claude is not running"}
+
+    try:
+        raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-20")
+    except RuntimeError:
+        return {"exists": True, "ready": False, "status": "error", "message": "Cannot read pane"}
+
+    status = get_session_status(raw)
+
+    if "trust this folder" in raw.lower() or "Enter to confirm" in raw:
+        return {"exists": True, "ready": False, "status": "trust_prompt", "message": "Accepting workspace trust..."}
+
+    ready = status in ("idle", "waiting_input")
+    return {
+        "exists": True,
+        "ready": ready,
+        "status": status,
+        "message": "Claude is ready" if ready else "Claude is starting...",
+    }
+
+
 @app.delete("/api/sessions/{name}")
 async def dismiss_session(name: str):
     """Kill the tmux session entirely.
@@ -1396,13 +1426,20 @@ async def create_session(body: dict):
              "/home/ubuntu/.local/bin/claude")
 
     # Auto-accept the "trust this folder" prompt after Claude starts
-    async def _accept_trust():
-        await asyncio.sleep(3)
-        try:
-            run_tmux("send-keys", "-t", name, "Enter")
-        except RuntimeError:
-            pass  # session may have died
+    async def _wait_and_accept_trust():
+        """Wait for Claude to show trust prompt, then accept it."""
+        for _ in range(10):
+            await asyncio.sleep(1)
+            try:
+                raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-20")
+                if "trust this folder" in raw.lower() or "Enter to confirm" in raw:
+                    run_tmux("send-keys", "-t", name, "Enter")
+                    return
+                if "\u276f" in raw or "❯" in raw:
+                    return  # Already trusted, Claude is ready
+            except RuntimeError:
+                return
 
-    asyncio.create_task(_accept_trust())
+    asyncio.create_task(_wait_and_accept_trust())
 
     return {"created": True, "name": name, "path": path}
