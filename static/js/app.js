@@ -3138,25 +3138,13 @@
           var name = document.createElement('div');
           name.className = 'preset-card-name';
           name.textContent = p.name;
-          if (p.mode) {
-            var badge = document.createElement('span');
-            badge.className = 'preset-mode-badge mode-' + p.mode;
-            badge.textContent = p.mode;
-            name.appendChild(badge);
-          }
-          var desc = document.createElement('div');
-          desc.className = 'preset-card-path';
-          desc.textContent = p.description || '';
           var path = document.createElement('div');
           path.className = 'preset-card-path';
-          path.style.fontSize = '0.75em';
-          path.style.opacity = '0.6';
           path.textContent = p.path;
           card.appendChild(name);
-          if (p.description) card.appendChild(desc);
           card.appendChild(path);
           card.addEventListener('click', function() {
-            createSession(p.path, '', p.initial_command || '', p.mode || '');
+            createSession(p.path, '');
           });
           presetList.appendChild(card);
         });
@@ -3172,12 +3160,10 @@
     newSessionPanel.classList.remove('visible');
   }
 
-  function createSession(path, name, initialCommand, mode) {
+  function createSession(path, name) {
     closeNewSession();
     showActionToast('Creating session...', 'info');
     var payload = { path: path, name: name };
-    if (initialCommand) payload.initial_command = initialCommand;
-    if (mode) payload.mode = mode;
     authFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3200,7 +3186,7 @@
   newSessionBackdrop.addEventListener('click', closeNewSession);
   customLaunch.addEventListener('click', function() {
     var p = customPath.value.trim();
-    if (p) createSession(p, '', '', '');
+    if (p) createSession(p, '');
   });
 
   // ========== Settings ==========
