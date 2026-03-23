@@ -305,9 +305,8 @@ def parse_messages(output: str) -> list[dict]:
         # ── assistant message (● but not a tool call)
         assistant_m = MARKERS["assistant"].match(line)
         if assistant_m:
-            if in_tool:
-                # continuation of tool args block -- skip
-                continue
+            # Always start a new assistant message when we see ● (not a tool call)
+            # Even if in_tool is True, this is a new assistant response
             flush()
             text = assistant_m.group(1).strip()
             current = {"role": "assistant", "content": text, "ts": int(time.time() * 1000)}
