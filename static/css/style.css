@@ -1933,6 +1933,13 @@ button:focus-visible { outline-offset: -2px; }
   50% { opacity: 1; }
 }
 
+.waiting-options-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px 2px;
+}
+
 /* Session list: waiting_input status dot */
 .session-card-status.waiting {
   background: var(--yellow);

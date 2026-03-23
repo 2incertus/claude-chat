@@ -806,6 +806,7 @@
     var inputArea = document.getElementById('inputArea');
     if (!inputArea) return;
     var label = document.getElementById('waitingInputLabel');
+    var optionsBar = document.getElementById('waitingOptionsBar');
     if (waiting) {
       inputArea.classList.add('waiting-input');
       if (!label) {
@@ -815,13 +816,110 @@
         label.textContent = 'Claude is waiting for your response';
         inputArea.insertBefore(label, inputArea.firstChild);
       }
+      // Scan chat feed for numbered options to make interactive
+      if (!optionsBar) {
+        var options = extractWaitingOptions();
+        if (options.length >= 2) {
+          optionsBar = document.createElement('div');
+          optionsBar.id = 'waitingOptionsBar';
+          optionsBar.className = 'waiting-options-bar';
+          var selectedNums = [];
+          var sendRow = document.createElement('div');
+          sendRow.className = 'quick-reply-send-row';
+          sendRow.style.display = 'none';
+          var sendBtn = document.createElement('button');
+          sendBtn.className = 'quick-reply-send-btn';
+          sendBtn.textContent = 'Send';
+          sendRow.appendChild(sendBtn);
+          for (var oi = 0; oi < options.length; oi++) {
+            var oBtn = document.createElement('button');
+            oBtn.className = 'quick-reply-btn';
+            var oNum = document.createElement('span');
+            oNum.className = 'quick-reply-num';
+            oNum.textContent = options[oi].num;
+            var oText = document.createElement('span');
+            oText.className = 'quick-reply-text';
+            oText.textContent = options[oi].text.length > 40 ? options[oi].text.substring(0, 40) + '\u2026' : options[oi].text;
+            oBtn.appendChild(oNum);
+            oBtn.appendChild(oText);
+            (function(num, btn) {
+              btn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                var idx = selectedNums.indexOf(num);
+                if (idx === -1) { selectedNums.push(num); btn.classList.add('selected'); }
+                else { selectedNums.splice(idx, 1); btn.classList.remove('selected'); }
+                if (selectedNums.length > 0) {
+                  selectedNums.sort(function(a, b) { return parseInt(a) - parseInt(b); });
+                  sendBtn.textContent = 'Send ' + selectedNums.join(', ');
+                  sendRow.style.display = 'flex';
+                } else {
+                  sendRow.style.display = 'none';
+                }
+              });
+            })(options[oi].num, oBtn);
+            optionsBar.appendChild(oBtn);
+          }
+          sendBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (currentSession && selectedNums.length > 0) {
+              sendMessage(selectedNums.join(', '));
+            }
+          });
+          optionsBar.appendChild(sendRow);
+          // Insert after the label
+          if (label.nextSibling) {
+            inputArea.insertBefore(optionsBar, label.nextSibling);
+          } else {
+            inputArea.appendChild(optionsBar);
+          }
+        }
+      }
       textInput.focus();
     } else {
       inputArea.classList.remove('waiting-input');
-      if (label) {
-        label.parentNode.removeChild(label);
+      if (label) label.parentNode.removeChild(label);
+      if (optionsBar) optionsBar.parentNode.removeChild(optionsBar);
+    }
+  }
+
+  function extractWaitingOptions() {
+    // Scan last few elements in chat feed for numbered options.
+    // renderMarkdown converts "1. text" into <ol><li>, so check both:
+    // 1) <ol> elements with <li> children (rendered lists)
+    // 2) Raw text with numbered patterns (fallback)
+    var results = [];
+    var children = chatFeed.children;
+    for (var i = Math.max(0, children.length - 5); i < children.length; i++) {
+      // Check for rendered <ol> lists
+      var ols = children[i].querySelectorAll('ol');
+      for (var oi = 0; oi < ols.length; oi++) {
+        var startNum = parseInt(ols[oi].getAttribute('start') || '1', 10);
+        var lis = ols[oi].querySelectorAll('li');
+        for (var li = 0; li < lis.length; li++) {
+          var liText = (lis[li].textContent || '').trim();
+          if (liText) results.push({ num: String(startNum + li), text: liText });
+        }
+      }
+      // Fallback: raw text patterns (for non-rendered content)
+      if (ols.length === 0) {
+        var text = children[i].textContent || '';
+        var lines = text.split('\n');
+        for (var lj = 0; lj < lines.length; lj++) {
+          var match = lines[lj].match(/^\s*(\d+)[.)]\s+(.+)/);
+          if (match) results.push({ num: match[1], text: match[2].trim() });
+        }
       }
     }
+    // Deduplicate by num, keep last occurrence
+    var seen = {};
+    var deduped = [];
+    for (var di = results.length - 1; di >= 0; di--) {
+      if (!seen[results[di].num]) {
+        seen[results[di].num] = true;
+        deduped.unshift(results[di]);
+      }
+    }
+    return deduped.length <= 12 ? deduped : [];
   }
 
   function renderMessages(messages) {
