@@ -427,47 +427,64 @@ async def _refresh_title(session_name: str, messages: list[dict]) -> None:
 
 
 STATUS_BAR_RE = re.compile(
-    r"(RAM\s+\d+%|CPU\s+\d+%|CTX\s+\d+%|tokens$|⏵⏵|bypass permissions|shift\+tab)"
+    r"(RAM\s+\d+%|CPU\s+\d+%|CTX\s+\d+%|tokens$|⏵⏵|bypass permissions|shift\+tab"
+    r"|accept edits|don't ask|current:\s+\d|latest:\s+\d|\d+\s+tokens$"
+    r"|\d+\s+shell|Press up to edit)"
 )
 
 def get_session_status(raw: str) -> str:
-    """Derive session status from last few lines of capture."""
+    """Derive session status from last few lines of capture.
+
+    Priority: waiting_input > working > idle.
+    Key insight: the ❯ prompt only appears when Claude is idle.
+    If there's no ❯ in recent output, Claude is still working.
+    """
     lines = [l for l in raw.splitlines() if l.strip()]
     # Filter out Claude Code status bar lines at the bottom
     content_lines = [l for l in lines if not STATUS_BAR_RE.search(l)]
     if not content_lines:
         return "idle"
-    tail = "\n".join(content_lines[-10:])
-    # Check for active generation indicators
-    # Claude Code uses random verbs: "Doing…", "Vibing…", "Churning…", "Undulating…", etc.
-    # Pattern: line starts with ● followed by a capitalized word and …
-    for cl in content_lines[-5:]:
-        stripped = cl.strip()
-        if re.match(r"^●\s+\S+…", stripped):
-            return "working"
-        if stripped.startswith("⎿  Running"):
-            return "working"
-    # Check if there's an empty user prompt (waiting for input)
-    last_content = content_lines[-1].strip()
-    if last_content == "❯" or MARKERS["user"].match(last_content):
-        return "idle"
-    if MARKERS["status"].match(last_content) or MARKERS["divider"].match(last_content):
-        return "idle"
-    # Check for AskUserQuestion / interactive prompts from Claude Code.
-    # Real waiting indicators are specific UI patterns, NOT just "ends with ?".
-    # Claude Code shows these when genuinely waiting for user selection:
-    #   - "Enter to select" (AskUserQuestion menu)
-    #   - "(y/n)" or "(Y/n)" permission prompts
-    #   - "Do you want to proceed?" type prompts with ❯ absent
-    tail_text = "\n".join(cl.strip() for cl in content_lines[-8:])
+
+    # Check last ~15 content lines for the ❯ prompt
+    tail_lines = content_lines[-15:]
+    tail_text = "\n".join(cl.strip() for cl in tail_lines)
+
+    # 1. Check for AskUserQuestion / interactive prompts (highest priority)
     if "Enter to select" in tail_text:
         return "waiting_input"
     if re.search(r"\([Yy]/[Nn]\)", tail_text):
         return "waiting_input"
-    # If last content is an assistant response or tool call, it just finished
-    if MARKERS["assistant"].match(last_content) or TOOL_CALL_RE.match(last_content):
+
+    # 2. Check for explicit working indicators
+    for cl in tail_lines[-8:]:
+        stripped = cl.strip()
+        # Active generation: "● Verbing…" or "● Verbing... (Ns)"
+        if re.match(r"^●\s+\S+[….]", stripped):
+            return "working"
+        # Tool execution in progress
+        if stripped.startswith("⎿  Running"):
+            return "working"
+        # Active tool call (● ToolName(...))
+        if TOOL_CALL_RE.match(stripped):
+            return "working"
+
+    # 3. Check if ❯ prompt is visible -- if yes, Claude is idle
+    has_prompt = False
+    for cl in tail_lines:
+        stripped = cl.strip()
+        if stripped == "❯" or stripped.startswith("❯ "):
+            has_prompt = True
+            break
+    if has_prompt:
         return "idle"
-    return "idle"
+
+    # 4. Check for divider/status lines as last content (idle after completion)
+    last_content = content_lines[-1].strip()
+    if MARKERS["status"].match(last_content) or MARKERS["divider"].match(last_content):
+        return "idle"
+
+    # 5. No ❯ prompt found, no explicit idle indicator → still working
+    return "working"
 
 
 # ---------------------------------------------------------------------------
