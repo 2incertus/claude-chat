@@ -200,6 +200,7 @@
   var bellBtn = document.getElementById('bellBtn');
   var refreshBtn = document.getElementById('refreshBtn');
   var copyAllBtn = document.getElementById('copyAllBtn');
+  var exportBtn = document.getElementById('exportBtn');
   var gearBtn = document.getElementById('gearBtn');
   var settingsBackdrop = document.getElementById('settingsBackdrop');
   var settingsPanel = document.getElementById('settingsPanel');
@@ -2412,6 +2413,76 @@
 
   copyAllBtn.addEventListener('click', copyConversation);
 
+  // Export conversation
+  function exportConversation(format) {
+    if (!currentSession) return;
+    var fmt = format || 'markdown';
+    var ext = fmt === 'json' ? '.json' : '.md';
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession) + '/export?fmt=' + fmt)
+      .then(function(r) {
+        if (!r.ok) throw new Error('Export failed');
+        return r.blob();
+      })
+      .then(function(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = currentSession + ext;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showActionToast('Exported as ' + ext.slice(1).toUpperCase(), 'success');
+      })
+      .catch(function() {
+        showActionToast('Export failed', 'error');
+      });
+  }
+
+  function closeExportDropdown() {
+    var existing = document.getElementById('exportDropdown');
+    if (existing) existing.remove();
+  }
+
+  exportBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var existing = document.getElementById('exportDropdown');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    var dd = document.createElement('div');
+    dd.id = 'exportDropdown';
+    dd.style.cssText = 'position:absolute;top:100%;right:0;margin-top:6px;background:var(--surface2);border:1px solid var(--border-medium);border-radius:8px;padding:4px 0;z-index:100;min-width:150px;box-shadow:0 4px 20px rgba(0,0,0,0.4);';
+    var btnMd = document.createElement('button');
+    btnMd.textContent = 'Markdown (.md)';
+    btnMd.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;color:var(--text);font-size:0.82rem;cursor:pointer;font-family:inherit;';
+    btnMd.addEventListener('mouseenter', function() { this.style.background = 'var(--surface3)'; });
+    btnMd.addEventListener('mouseleave', function() { this.style.background = 'none'; });
+    btnMd.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      closeExportDropdown();
+      exportConversation('markdown');
+    });
+    var btnJson = document.createElement('button');
+    btnJson.textContent = 'JSON (.json)';
+    btnJson.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;color:var(--text);font-size:0.82rem;cursor:pointer;font-family:inherit;';
+    btnJson.addEventListener('mouseenter', function() { this.style.background = 'var(--surface3)'; });
+    btnJson.addEventListener('mouseleave', function() { this.style.background = 'none'; });
+    btnJson.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      closeExportDropdown();
+      exportConversation('json');
+    });
+    dd.appendChild(btnMd);
+    dd.appendChild(btnJson);
+    exportBtn.appendChild(dd);
+  });
+
+  document.addEventListener('click', function() {
+    closeExportDropdown();
+  });
+
   // Force refresh button
   refreshBtn.addEventListener('click', function() {
     refreshBtn.style.animation = 'btnSpin 0.5s linear';
@@ -3150,6 +3221,13 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
       e.preventDefault();
       copyConversation();
+      return;
+    }
+
+    // Ctrl/Cmd+Shift+E: export conversation as markdown
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'E') {
+      e.preventDefault();
+      exportConversation('markdown');
       return;
     }
 

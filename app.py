@@ -630,6 +630,45 @@ async def get_session(name: str, lines: int = 10000):
     }
 
 
+@app.get("/api/sessions/{name}/export")
+async def export_session(name: str, fmt: str = "markdown"):
+    validate_session_name(name)
+    if not _is_claude_session(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-10000")
+    messages = parse_messages(raw)
+    title = title_cache.get(name, name)
+
+    if fmt == "json":
+        return Response(
+            content=json.dumps({"title": title, "session": name, "messages": messages}, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{name}.json"'},
+        )
+
+    # Default: Markdown
+    lines = [f"# {title}\n"]
+    for m in messages:
+        if m["role"] == "user":
+            lines.append(f"**User:**\n{m['content']}\n")
+        elif m["role"] == "assistant":
+            lines.append(f"**Assistant:**\n{m['content']}\n")
+        elif m["role"] == "tool":
+            results = "\n  ".join(m.get("tool_results", []))
+            lines.append(f"**{m.get('tool', 'Tool')}** {m['content']}")
+            if results:
+                lines.append(f"  {results}")
+            lines.append("")
+
+    md = "\n".join(lines)
+    return Response(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{name}.md"'},
+    )
+
+
 WHISPER_URL = os.environ.get("WHISPER_URL", "http://host.docker.internal:2022")
 
 
