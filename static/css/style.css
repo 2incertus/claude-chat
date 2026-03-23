@@ -747,6 +747,30 @@ body {
 .msg-action-btn.playing {
   color: var(--accent);
 }
+.msg-star-btn.starred {
+  color: var(--accent);
+}
+.msg-starred {
+  border-left: 2px solid var(--accent);
+}
+.chat-feed.starred-only .msg:not(.msg-starred) {
+  display: none;
+}
+.chat-feed.starred-only .tool-activity-block {
+  display: none;
+}
+.chat-feed.starred-only .agent-status-chip {
+  display: none;
+}
+.chat-feed.starred-only .cmd-result-card {
+  display: none;
+}
+.chat-feed.starred-only .agent-result-card {
+  display: none;
+}
+.chat-feed.starred-only .msg-user-wrapper:not(:has(.msg-starred)) {
+  display: none;
+}
 .code-copy-btn {
   position: absolute;
   top: 4px;

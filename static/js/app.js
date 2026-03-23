@@ -214,6 +214,8 @@
   var presetList = document.getElementById('presetList');
   var customPath = document.getElementById('customPath');
   var customLaunch = document.getElementById('customLaunch');
+  var starFilterBtn = document.getElementById('starFilterBtn');
+  var starFilterActive = false;
 
   // ========== Clipboard Helpers ==========
   function fallbackCopy(text) {
@@ -242,6 +244,28 @@
     uploadToast.textContent = 'Copied!';
     uploadToast.style.display = 'block';
     setTimeout(function() { uploadToast.style.display = 'none'; }, 1500);
+  }
+
+  // ========== Star/Pin Helpers ==========
+  function msgId(msg) {
+    return msg.role + ':' + (msg.ts || 0) + ':' + (msg.content || '').substring(0, 20);
+  }
+
+  function getStarredMessages(sessionName) {
+    try { return JSON.parse(localStorage.getItem('starred_' + sessionName) || '[]'); } catch(e) { return []; }
+  }
+
+  function setStarredMessages(sessionName, ids) {
+    localStorage.setItem('starred_' + sessionName, JSON.stringify(ids));
+  }
+
+  function toggleStar(sessionName, id) {
+    var starred = getStarredMessages(sessionName);
+    var idx = starred.indexOf(id);
+    if (idx >= 0) starred.splice(idx, 1);
+    else starred.push(id);
+    setStarredMessages(sessionName, starred);
+    return idx < 0;
   }
 
   // ========== Desktop Detection ==========
@@ -328,6 +352,8 @@
     contentHash = '';
     idleCount = 0;
     lastMessageCount = 0;
+    starFilterActive = false;
+    chatFeed.classList.remove('starred-only');
     stopSessionListPolling();
 
     // Clear text input and restore any saved draft for this session
@@ -771,6 +797,7 @@
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
+        updateStarFilterBtn();
         var savedPos = sessionScrollPositions[name];
         if (savedPos !== undefined) {
           chatFeed.scrollTop = savedPos;
@@ -1408,6 +1435,30 @@
         chatFeed.appendChild(wrapper);
         return;
       }
+      // Star button for user messages
+      var uMId = msgId(m);
+      var uStarredList = getStarredMessages(currentSession);
+      var uIsStarred = uStarredList.indexOf(uMId) >= 0;
+      var uActions = document.createElement('div');
+      uActions.className = 'msg-actions';
+      var uStarBtn = document.createElement('button');
+      uStarBtn.className = 'msg-action-btn msg-star-btn' + (uIsStarred ? ' starred' : '');
+      uStarBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (uIsStarred ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+      uStarBtn.title = uIsStarred ? 'Unstar' : 'Star message';
+      (function(id, btn, msgEl) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          var nowStarred = toggleStar(currentSession, id);
+          btn.classList.toggle('starred', nowStarred);
+          btn.querySelector('svg').setAttribute('fill', nowStarred ? 'currentColor' : 'none');
+          btn.title = nowStarred ? 'Unstar' : 'Star message';
+          msgEl.classList.toggle('msg-starred', nowStarred);
+          updateStarFilterBtn();
+        });
+      })(uMId, uStarBtn, el);
+      uActions.appendChild(uStarBtn);
+      el.appendChild(uActions);
+      if (uIsStarred) el.classList.add('msg-starred');
       // For non-pending user messages with images, use the wrapper
       if (imgEl) {
         wrapper.appendChild(el);
@@ -1543,6 +1594,27 @@
           });
         })(content, ttsBtn);
         actions.appendChild(ttsBtn);
+        // Star button for assistant messages
+        var aMId = msgId(m);
+        var aStarredList = getStarredMessages(currentSession);
+        var aIsStarred = aStarredList.indexOf(aMId) >= 0;
+        var aStarBtn = document.createElement('button');
+        aStarBtn.className = 'msg-action-btn msg-star-btn' + (aIsStarred ? ' starred' : '');
+        aStarBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (aIsStarred ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+        aStarBtn.title = aIsStarred ? 'Unstar' : 'Star message';
+        (function(id, btn, msgEl) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var nowStarred = toggleStar(currentSession, id);
+            btn.classList.toggle('starred', nowStarred);
+            btn.querySelector('svg').setAttribute('fill', nowStarred ? 'currentColor' : 'none');
+            btn.title = nowStarred ? 'Unstar' : 'Star message';
+            msgEl.classList.toggle('msg-starred', nowStarred);
+            updateStarFilterBtn();
+          });
+        })(aMId, aStarBtn, el);
+        actions.appendChild(aStarBtn);
+        if (aIsStarred) el.classList.add('msg-starred');
         el.appendChild(actions);
 
         // Detect numbered options for quick-reply buttons
@@ -1809,6 +1881,7 @@
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
+        updateStarFilterBtn();
         scrollToBottom(false);
         startPolling();
       })
@@ -2510,6 +2583,28 @@
     refreshBtn.style.animation = 'btnSpin 0.5s linear';
     setTimeout(function() { refreshBtn.style.animation = ''; }, 500);
     forceRefresh();
+  });
+
+  // Star filter button
+  function updateStarFilterBtn() {
+    if (!currentSession) {
+      starFilterBtn.style.display = 'none';
+      return;
+    }
+    var starred = getStarredMessages(currentSession);
+    starFilterBtn.style.display = starred.length > 0 ? '' : 'none';
+    if (starred.length === 0 && starFilterActive) {
+      starFilterActive = false;
+      chatFeed.classList.remove('starred-only');
+      starFilterBtn.querySelector('svg').setAttribute('fill', 'none');
+    }
+  }
+
+  starFilterBtn.addEventListener('click', function() {
+    starFilterActive = !starFilterActive;
+    chatFeed.classList.toggle('starred-only', starFilterActive);
+    starFilterBtn.querySelector('svg').setAttribute('fill', starFilterActive ? 'currentColor' : 'none');
+    starFilterBtn.title = starFilterActive ? 'Show all messages' : 'Show starred only';
   });
 
   bellBtn.addEventListener('click', function() {
