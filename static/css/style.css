@@ -695,7 +695,8 @@ body {
   background: rgba(0,0,0,0.03);
 }
 
-.msg-assistant-text .code-block {
+.msg-assistant-text .code-block,
+.msg-user .code-block {
   display: block;
   background: var(--code-bg);
   font-family: var(--mono);
@@ -1131,6 +1132,7 @@ body {
 .session-card.dead {
   opacity: 0.5;
   border-left: 3px solid var(--red);
+  cursor: default;
 }
 .session-card.dead .session-card-status {
   background: var(--red);
@@ -2023,13 +2025,6 @@ button:focus-visible { outline-offset: -2px; }
   padding: 2px 0;
   line-height: 1.4;
 }
-.agent-tool-results-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--text-dim);
-  margin-bottom: 4px;
-}
-
 /* ===== Login Screen (PIN auth) ===== */
 .login-screen {
   position: fixed;

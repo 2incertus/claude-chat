@@ -1392,15 +1392,23 @@
       if (imgMatch) {
         imgEl = document.createElement('img');
         imgEl.className = 'msg-image';
-        imgEl.src = '/api/uploads/' + encodeURIComponent(imgMatch[1]);
         imgEl.alt = imgMatch[1];
         imgEl.loading = 'lazy';
-        (function(src) {
-          imgEl.addEventListener('click', function(e) {
-            e.stopPropagation();
-            showImageOverlay(src);
+        // Load via authFetch to send Bearer token
+        (function(img, filename) {
+          authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
+            if (r.ok) return r.blob();
+          }).then(function(blob) {
+            if (blob) {
+              var url = URL.createObjectURL(blob);
+              img.src = url;
+              img.addEventListener('click', function(e) {
+                e.stopPropagation();
+                showImageOverlay(url);
+              });
+            }
           });
-        })(imgEl.src);
+        })(imgEl, imgMatch[1]);
       }
       if (m._pending) {
         var statusEl = document.createElement('div');
@@ -1599,7 +1607,7 @@
         // Show when message has numbered options AND (ends with ? OR is the last assistant message)
         var contentTrimmed = content.trim();
         var endsWithQuestion = /[?:]\s*$/.test(contentTrimmed);
-        var isLastAssistant = (msgIdx === allMsgs.length - 1) || (function() {
+        var isLastAssistant = !allMsgs ? false : (msgIdx === allMsgs.length - 1) || (function() {
           for (var ni = msgIdx + 1; ni < allMsgs.length; ni++) {
             if (allMsgs[ni].role === 'assistant') return false;
             if (allMsgs[ni].role === 'user') return true;
