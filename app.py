@@ -426,6 +426,30 @@ async def _refresh_title(session_name: str, messages: list[dict]) -> None:
     title_cache[session_name] = title
 
 
+COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
+CTX_RE = re.compile(r"CTX\s+(\d+)%")
+
+
+def extract_cost_info(raw: str) -> dict | None:
+    """Extract cost/context info from last lines of pane output."""
+    lines = raw.strip().splitlines()
+    tail = lines[-50:] if len(lines) > 50 else lines
+    cost = None
+    ctx_pct = None
+    for line in reversed(tail):
+        if cost is None:
+            m = COST_RE.search(line)
+            if m:
+                cost = float(m.group(1))
+        if ctx_pct is None:
+            m = CTX_RE.search(line)
+            if m:
+                ctx_pct = int(m.group(1))
+    if cost is not None or ctx_pct is not None:
+        return {"cost": cost, "context_pct": ctx_pct}
+    return None
+
+
 STATUS_BAR_RE = re.compile(
     r"(RAM\s+\d+%|CPU\s+\d+%|CTX\s+\d+%|tokens$|⏵⏵|bypass permissions|shift\+tab"
     r"|accept edits|don't ask|current:\s+\d|latest:\s+\d|\d+\s+tokens$"
@@ -577,12 +601,14 @@ async def list_sessions():
 
         if s["state"] == "dead":
             preview = ""
+            cost_info = None
             try:
                 raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-50")
                 msgs = parse_messages(raw)
                 asst = [m for m in msgs if m["role"] == "assistant"]
                 if asst:
                     preview = asst[-1]["content"][:120]
+                cost_info = extract_cost_info(raw)
             except RuntimeError:
                 pass
 
@@ -596,6 +622,7 @@ async def list_sessions():
                 "status": "dead",
                 "state": "dead",
                 "preview": preview,
+                "cost_info": cost_info,
             })
             continue
 
@@ -620,6 +647,7 @@ async def list_sessions():
             "status": get_session_status(raw),
             "state": "active",
             "preview": preview,
+            "cost_info": extract_cost_info(raw),
         })
 
     return result
@@ -637,6 +665,7 @@ async def get_session(name: str, lines: int = 10000):
     title = title_cache.get(name, name)
     chash = content_hash(raw)
     status = get_session_status(raw)
+    cost_info = extract_cost_info(raw)
 
     return {
         "name": name,
@@ -646,7 +675,47 @@ async def get_session(name: str, lines: int = 10000):
         "content_hash": chash,
         "message_count": len(messages),
         "waiting_input": status == "waiting_input",
+        "cost_info": cost_info,
     }
+
+
+@app.get("/api/sessions/{name}/export")
+async def export_session(name: str, fmt: str = "markdown"):
+    validate_session_name(name)
+    if not _is_claude_session(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-10000")
+    messages = parse_messages(raw)
+    title = title_cache.get(name, name)
+
+    if fmt == "json":
+        return Response(
+            content=json.dumps({"title": title, "session": name, "messages": messages}, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{name}.json"'},
+        )
+
+    # Default: Markdown
+    lines = [f"# {title}\n"]
+    for m in messages:
+        if m["role"] == "user":
+            lines.append(f"**User:**\n{m['content']}\n")
+        elif m["role"] == "assistant":
+            lines.append(f"**Assistant:**\n{m['content']}\n")
+        elif m["role"] == "tool":
+            results = "\n  ".join(m.get("tool_results", []))
+            lines.append(f"**{m.get('tool', 'Tool')}** {m['content']}")
+            if results:
+                lines.append(f"  {results}")
+            lines.append("")
+
+    md = "\n".join(lines)
+    return Response(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{name}.md"'},
+    )
 
 
 WHISPER_URL = os.environ.get("WHISPER_URL", "http://host.docker.internal:2022")
@@ -822,6 +891,7 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
     raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", f"-{lines}")
     chash = content_hash(raw)
     status = get_session_status(raw)
+    cost_info = extract_cost_info(raw)
 
     if hash and hash == chash:
         # no changes
@@ -830,6 +900,7 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
             "content_hash": chash,
             "status": status,
             "waiting_input": status == "waiting_input",
+            "cost_info": cost_info,
         }
 
     messages = parse_messages(raw)
@@ -839,6 +910,7 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
         "status": status,
         "messages": messages,
         "waiting_input": status == "waiting_input",
+        "cost_info": cost_info,
     }
 
 
@@ -1058,6 +1130,8 @@ async def get_config():
 async def create_session(body: dict):
     path = os.path.realpath(body.get("path", "/home/ubuntu"))
     name = body.get("name", "")
+    initial_command = body.get("initial_command", "")
+    mode = body.get("mode", "")
 
     if not _is_allowed_path(path):
         raise HTTPException(status_code=400, detail=f"Path not allowed: {path}")
@@ -1076,7 +1150,15 @@ async def create_session(body: dict):
     if _session_exists(name):
         raise HTTPException(status_code=409, detail=f"Session {name} already exists")
 
-    run_tmux("new-session", "-d", "-s", name, "-c", path,
-             "/home/ubuntu/.local/bin/claude")
+    claude_cmd = "/home/ubuntu/.local/bin/claude"
+    if mode and mode in ("plan", "code", "ask"):
+        claude_cmd += f" --mode {mode}"
+
+    run_tmux("new-session", "-d", "-s", name, "-c", path, claude_cmd)
+
+    if initial_command:
+        await asyncio.sleep(2)
+        run_tmux("send-keys", "-t", name, "-l", initial_command)
+        run_tmux("send-keys", "-t", name, "Enter")
 
     return {"created": True, "name": name, "path": path}
