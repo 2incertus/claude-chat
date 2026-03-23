@@ -247,6 +247,58 @@
     setTimeout(function() { uploadToast.style.display = 'none'; }, 1500);
   }
 
+  // ========== Server Settings Sync ==========
+  var SYNCED_KEYS = [
+    'pinned_sessions', 'session_folders', 'hidden_sessions',
+    'ntfy_sessions', 'claude_chat_settings', 'chatVoice'
+  ];
+  var _syncDebounce = null;
+
+  function syncSettingsToServer() {
+    clearTimeout(_syncDebounce);
+    _syncDebounce = setTimeout(function() {
+      var payload = {};
+      SYNCED_KEYS.forEach(function(k) {
+        var v = localStorage.getItem(k);
+        if (v) { try { payload[k] = JSON.parse(v); } catch(e) { payload[k] = v; } }
+      });
+      // Also sync starred_* keys
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i);
+        if (key && key.startsWith('starred_')) {
+          try { payload[key] = JSON.parse(localStorage.getItem(key)); } catch(e) {}
+        }
+      }
+      authFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).catch(function() {});
+    }, 1000);
+  }
+
+  function loadSettingsFromServer() {
+    authFetch('/api/settings')
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) return;
+        Object.keys(data).forEach(function(k) {
+          // Only import if local doesn't already have it, or server is source of truth
+          var serverVal = JSON.stringify(data[k]);
+          var localVal = localStorage.getItem(k);
+          if (!localVal || localVal === '{}' || localVal === '[]' || localVal === '""') {
+            localStorage.setItem(k, serverVal);
+          }
+        });
+        // Apply settings that affect UI
+        var settings = data.claude_chat_settings;
+        if (settings) {
+          Object.keys(settings).forEach(function(k) { applySetting(k, settings[k]); });
+        }
+      })
+      .catch(function() {});
+  }
+
   // ========== Star/Pin Helpers ==========
   function msgId(msg) {
     return msg.role + ':' + (msg.ts || 0) + ':' + (msg.content || '').substring(0, 20);
@@ -258,6 +310,7 @@
 
   function setStarredMessages(sessionName, ids) {
     localStorage.setItem('starred_' + sessionName, JSON.stringify(ids));
+    syncSettingsToServer();
   }
 
   function toggleStar(sessionName, id) {
@@ -431,6 +484,7 @@
 
   function setPinnedSessions(arr) {
     localStorage.setItem('pinned_sessions', JSON.stringify(arr));
+    syncSettingsToServer();
   }
 
   function togglePin(name) {
@@ -456,6 +510,7 @@
     if (folder) folders[sessionName] = folder;
     else delete folders[sessionName];
     localStorage.setItem('session_folders', JSON.stringify(folders));
+    syncSettingsToServer();
   }
   function getCollapsedFolders() {
     try { return JSON.parse(localStorage.getItem('collapsed_folders') || '[]'); } catch(e) { return []; }
@@ -2650,6 +2705,7 @@
       var s = JSON.parse(localStorage.getItem('ntfy_sessions') || '{}');
       s[session] = enabled;
       localStorage.setItem('ntfy_sessions', JSON.stringify(s));
+      syncSettingsToServer();
     } catch(e) {}
   }
 
@@ -3212,6 +3268,7 @@
     s[key] = value;
     localStorage.setItem('claude_chat_settings', JSON.stringify(s));
     applySetting(key, value);
+    syncSettingsToServer();
   }
 
   function applySetting(key, value) {
@@ -3651,6 +3708,7 @@
 
   // ========== Init ==========
   function initApp() {
+    loadSettingsFromServer();
     loadSessions();
     startSessionListPolling();
     fetchCommands();

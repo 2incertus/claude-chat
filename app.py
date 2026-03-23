@@ -1058,6 +1058,49 @@ async def get_history():
     return entries[-20:][::-1]
 
 
+# ---------------------------------------------------------------------------
+# Server-side settings (synced across devices)
+# ---------------------------------------------------------------------------
+SETTINGS_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "settings.json")
+
+SYNCED_KEYS = {
+    "pinned_sessions", "session_folders", "hidden_sessions",
+    "ntfy_sessions", "claude_chat_settings", "chatVoice",
+}
+
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_settings(data: dict) -> None:
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, SETTINGS_FILE)
+
+
+@app.get("/api/settings")
+async def get_settings():
+    return _load_settings()
+
+
+@app.put("/api/settings")
+async def put_settings(body: dict):
+    # Merge: only accept known keys, plus starred_* keys
+    current = _load_settings()
+    for key, val in body.items():
+        if key in SYNCED_KEYS or key.startswith("starred_"):
+            current[key] = val
+    _save_settings(current)
+    return {"ok": True}
+
+
 @app.post("/api/ntfy")
 async def send_ntfy(request_body: dict):
     """Proxy notification to internal ntfy server."""
