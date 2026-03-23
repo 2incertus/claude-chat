@@ -761,6 +761,7 @@
         tableWrap.className = 'table-wrap';
         var table = document.createElement('table');
         var tLines = block.lines;
+        var tbody = null;
         for (var ti = 0; ti < tLines.length; ti++) {
           var tl = tLines[ti].replace(/^\|/, '').replace(/\|$/, '');
           var cells = tl.split('|');
@@ -778,7 +779,6 @@
             thead.appendChild(row);
             table.appendChild(thead);
           } else {
-            var tbody = table.querySelector('tbody');
             if (!tbody) { tbody = document.createElement('tbody'); table.appendChild(tbody); }
             tbody.appendChild(row);
           }
@@ -902,7 +902,7 @@
     var agents = [];
     var regular = [];
     for (var t = 0; t < tools.length; t++) {
-      if (tools[t].tool === 'Agent' || tools[t].tool === 'Skill') {
+      if (tools[t].tool === 'Agent' || tools[t].tool === 'Skill' || tools[t].tool === 'Explore') {
         agents.push(tools[t]);
       } else {
         regular.push(tools[t]);
@@ -1038,9 +1038,9 @@
 
       var content = m.content || m.text || '';
 
-      // Detect agent status messages: 'Agent "name" completed/launched'
-      var agentStatusMatch = content.match(/^Agent\s+"([^"]+)"\s*(completed|launched|failed)/i);
-      if (!agentStatusMatch) agentStatusMatch = content.match(/^Agent\s+[\u201c]([^\u201d]+)[\u201d]\s*(completed|launched|failed)/i);
+      // Detect agent/explore status messages: 'Agent "name" completed/launched'
+      var agentStatusMatch = content.match(/^(?:Agent|Explore)\s+"([^"]+)"\s*(completed|launched|failed)/i);
+      if (!agentStatusMatch) agentStatusMatch = content.match(/^(?:Agent|Explore)\s+[\u201c]([^\u201d]+)[\u201d]\s*(completed|launched|failed)/i);
       if (agentStatusMatch) {
         el = document.createElement('div');
         el.className = 'agent-status-chip';
@@ -1191,8 +1191,8 @@
         if (!animate) el.style.animation = 'none';
       }
     } else if (m.role === 'tool') {
-      if (m.tool === 'Agent' || m.tool === 'Skill') {
-        // Agent/Skill calls get collapsible cards
+      if (m.tool === 'Agent' || m.tool === 'Skill' || m.tool === 'Explore') {
+        // Agent/Skill/Explore calls get collapsible cards
         el = document.createElement('div');
         el.className = 'agent-result-card';
         var agentHeader = document.createElement('div');

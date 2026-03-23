@@ -48,8 +48,9 @@ MARKERS = {
 }
 
 TOOL_CALL_RE = re.compile(
-    r"^●\s*(Bash|Read|Write|Edit|Grep|Glob|Agent|Skill|TaskCreate|TaskUpdate"
-    r"|TaskList|TaskGet|ToolSearch|NotebookEdit)\s*\("
+    r"^●\s*(Bash|Read|Write|Edit|Grep|Glob|Agent|Skill|Explore|TaskCreate|TaskUpdate"
+    r"|TaskList|TaskGet|TaskOutput|TaskStop|ToolSearch|NotebookEdit|WebFetch|WebSearch"
+    r"|EnterPlanMode|ExitPlanMode|SendMessage|AskUserQuestion)\s*\("
 )
 
 # ---------------------------------------------------------------------------
@@ -296,8 +297,8 @@ def parse_messages(output: str) -> list[dict]:
     # filter out empty messages and misclassified tool output
     # (Claude Code wraps lines at narrow pane widths, breaking tool markers)
     _TOOL_LEAK_RE = re.compile(
-        r"^(Updated?|Read?|Write?|Bash?|Edit|Grep?|Glob?|"
-        r"Agent|Skill|Task\w*|Tool\w*|Notebook\w*|Search?)\("
+        r"^(Updated?|Read?|Write?|Bash?|Edit|Grep?|Glob?|Explore|"
+        r"Agent|Skill|Task\w*|Tool\w*|Notebook\w*|Search?|Web\w*|Send\w*)\("
     )
     _BG_CMD_RE = re.compile(r"Background command ")
     _WIBBLE_RE = re.compile(r"^\w+ing(?:\.\.\.|…)\s*\(\d+s\)")
