@@ -421,7 +421,12 @@
       timeEl.textContent = s.last_activity || '';
 
       var dot = document.createElement('div');
-      dot.className = 'session-card-status' + (s.state === 'dead' ? '' : (s.status === 'working' ? ' working' : ''));
+      var dotClass = 'session-card-status';
+      if (s.state !== 'dead') {
+        if (s.status === 'working') dotClass += ' working';
+        else if (s.status === 'waiting_input') dotClass += ' waiting';
+      }
+      dot.className = dotClass;
 
       meta.appendChild(timeEl);
       meta.appendChild(dot);
@@ -571,6 +576,7 @@
       .then(function(data) {
         if (!isEditingTitle) chatTitle.textContent = data.title || data.name;
         updateStatusDot(data.status);
+        updateWaitingInput(data.waiting_input);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
@@ -593,6 +599,9 @@
     if (status === 'working') {
       chatStatus.className = 'status-dot working';
       typingIndicator.classList.add('visible');
+    } else if (status === 'waiting_input') {
+      chatStatus.className = 'status-dot waiting';
+      typingIndicator.classList.remove('visible');
     } else {
       chatStatus.className = 'status-dot';
       typingIndicator.classList.remove('visible');
@@ -604,6 +613,28 @@
     } else if (prevSessionStatus !== 'working' && status === 'working') {
       workingSessionCount = Math.max(1, workingSessionCount + 1);
       updateTabTitle();
+    }
+  }
+
+  function updateWaitingInput(waiting) {
+    var inputArea = document.getElementById('inputArea');
+    if (!inputArea) return;
+    var label = document.getElementById('waitingInputLabel');
+    if (waiting) {
+      inputArea.classList.add('waiting-input');
+      if (!label) {
+        label = document.createElement('div');
+        label.id = 'waitingInputLabel';
+        label.className = 'waiting-input-label';
+        label.textContent = 'Claude is waiting for your response';
+        inputArea.insertBefore(label, inputArea.firstChild);
+      }
+      textInput.focus();
+    } else {
+      inputArea.classList.remove('waiting-input');
+      if (label) {
+        label.parentNode.removeChild(label);
+      }
     }
   }
 
@@ -686,8 +717,18 @@
         continue;
       }
       if (!line.trim()) { i++; continue; }
+      // Detect markdown tables (lines starting with |)
+      if (/^\|/.test(line)) {
+        var tableLines = [];
+        while (i < lines.length && /^\|/.test(lines[i])) {
+          tableLines.push(lines[i]);
+          i++;
+        }
+        blocks.push({ type: 'table', lines: tableLines });
+        continue;
+      }
       var group = [];
-      while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i])) {
+      while (i < lines.length && lines[i].trim() && !/^```/.test(lines[i]) && !/^\|/.test(lines[i])) {
         group.push(lines[i]);
         i++;
       }
@@ -713,6 +754,37 @@
         })(block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'));
         pre.appendChild(copyBtn);
         frag.appendChild(pre);
+        continue;
+      }
+      if (block.type === 'table') {
+        var tableWrap = document.createElement('div');
+        tableWrap.className = 'table-wrap';
+        var table = document.createElement('table');
+        var tLines = block.lines;
+        for (var ti = 0; ti < tLines.length; ti++) {
+          var tl = tLines[ti].replace(/^\|/, '').replace(/\|$/, '');
+          var cells = tl.split('|');
+          // Skip separator rows (|---|---|)
+          if (cells.length > 0 && /^[\s\-:]+$/.test(cells.join(''))) continue;
+          var row = document.createElement('tr');
+          var isHeader = ti === 0;
+          for (var ci = 0; ci < cells.length; ci++) {
+            var cell = document.createElement(isHeader ? 'th' : 'td');
+            cell.appendChild(applyInline(cells[ci].trim()));
+            row.appendChild(cell);
+          }
+          if (isHeader) {
+            var thead = document.createElement('thead');
+            thead.appendChild(row);
+            table.appendChild(thead);
+          } else {
+            var tbody = table.querySelector('tbody');
+            if (!tbody) { tbody = document.createElement('tbody'); table.appendChild(tbody); }
+            tbody.appendChild(row);
+          }
+        }
+        tableWrap.appendChild(table);
+        frag.appendChild(tableWrap);
         continue;
       }
       var groupLines = block.lines;
@@ -930,6 +1002,33 @@
 
       var content = m.content || m.text || '';
 
+      // Detect agent status messages: 'Agent "name" completed/launched'
+      var agentStatusMatch = content.match(/^Agent\s+"([^"]+)"\s*(completed|launched|failed)/i);
+      if (!agentStatusMatch) agentStatusMatch = content.match(/^Agent\s+[\u201c]([^\u201d]+)[\u201d]\s*(completed|launched|failed)/i);
+      if (agentStatusMatch) {
+        el = document.createElement('div');
+        el.className = 'agent-status-chip';
+        var chipIcon = document.createElement('span');
+        chipIcon.className = 'agent-status-icon';
+        chipIcon.textContent = '\u25C7';
+        var chipLabel = document.createElement('span');
+        chipLabel.className = 'agent-status-label';
+        chipLabel.textContent = 'Agent';
+        var chipName = document.createElement('span');
+        chipName.className = 'agent-status-name';
+        chipName.textContent = agentStatusMatch[1];
+        var chipStatus = document.createElement('span');
+        chipStatus.className = 'agent-status-state ' + agentStatusMatch[2].toLowerCase();
+        chipStatus.textContent = agentStatusMatch[2].toLowerCase();
+        el.appendChild(chipIcon);
+        el.appendChild(chipLabel);
+        el.appendChild(chipName);
+        el.appendChild(chipStatus);
+        if (!animate) el.style.animation = 'none';
+        chatFeed.appendChild(el);
+        return;
+      }
+
       if (isCommandResult) {
         el = document.createElement('div');
         el.className = 'cmd-result-card';
@@ -1038,17 +1137,49 @@
         if (m.tool_results) {
           var toolResults = document.createElement('div');
           toolResults.className = 'agent-tool-results';
-          var trLabel = document.createElement('div');
-          trLabel.className = 'agent-tool-results-label';
-          trLabel.textContent = 'Tool Results';
-          toolResults.appendChild(trLabel);
-          var trContent = document.createElement('pre');
-          trContent.className = 'code-block';
-          trContent.style.margin = '4px 0 0';
-          trContent.style.fontSize = '12px';
-          var trText = typeof m.tool_results === 'string' ? m.tool_results : JSON.stringify(m.tool_results, null, 2);
-          trContent.textContent = trText;
-          toolResults.appendChild(trContent);
+          var resultsArr = Array.isArray(m.tool_results) ? m.tool_results : [m.tool_results];
+          // Separate backgrounded agent entries from regular results
+          var bgAgents = [];
+          var regularResults = [];
+          for (var ri = 0; ri < resultsArr.length; ri++) {
+            var rItem = typeof resultsArr[ri] === 'string' ? resultsArr[ri] : JSON.stringify(resultsArr[ri]);
+            if (rItem.indexOf('Backgrounded agent') === 0 || rItem.indexOf('Backgrounded agent') >= 0 && rItem.indexOf('\u21b3') >= 0) {
+              bgAgents.push(rItem);
+            } else {
+              regularResults.push(rItem);
+            }
+          }
+          if (bgAgents.length > 0) {
+            var bgLabel = document.createElement('div');
+            bgLabel.className = 'agent-tool-results-label';
+            bgLabel.textContent = 'Sub-agents (' + bgAgents.length + ')';
+            toolResults.appendChild(bgLabel);
+            for (var bi = 0; bi < bgAgents.length; bi++) {
+              var subItem = document.createElement('div');
+              subItem.className = 'agent-sub-item';
+              var diamondIcon = document.createElement('span');
+              diamondIcon.className = 'agent-sub-item-icon';
+              diamondIcon.textContent = '\u25C7';
+              var subDesc = document.createElement('span');
+              subDesc.className = 'agent-sub-item-desc';
+              subDesc.textContent = bgAgents[bi];
+              subItem.appendChild(diamondIcon);
+              subItem.appendChild(subDesc);
+              toolResults.appendChild(subItem);
+            }
+          }
+          if (regularResults.length > 0) {
+            var trLabel = document.createElement('div');
+            trLabel.className = 'agent-tool-results-label';
+            trLabel.textContent = 'Tool Results';
+            toolResults.appendChild(trLabel);
+            var trContent = document.createElement('pre');
+            trContent.className = 'code-block';
+            trContent.style.margin = '4px 0 0';
+            trContent.style.fontSize = '12px';
+            trContent.textContent = regularResults.join('\n');
+            toolResults.appendChild(trContent);
+          }
           agentBody.appendChild(toolResults);
         }
         agentHeader.addEventListener('click', function() {
@@ -1090,6 +1221,7 @@
       })
       .then(function(data) {
         updateStatusDot(data.status);
+        updateWaitingInput(data.waiting_input);
         checkNtfyTrigger(currentSession, data.status, data.has_changes ? data.messages : null);
 
         if (data.has_changes && data.messages) {

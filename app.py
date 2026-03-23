@@ -418,6 +418,23 @@ def get_session_status(raw: str) -> str:
         return "idle"
     if MARKERS["status"].match(last_content) or MARKERS["divider"].match(last_content):
         return "idle"
+    # Check for AskUserQuestion: if the last meaningful assistant/continuation line
+    # ends with '?' and there's no user prompt after it, Claude is waiting for input.
+    # Walk backwards to find the last meaningful content line.
+    for cl in reversed(content_lines):
+        stripped = cl.strip()
+        if not stripped:
+            continue
+        # Skip status bar remnants and markers
+        if STATUS_BAR_RE.search(stripped):
+            continue
+        if MARKERS["status"].match(stripped) or MARKERS["divider"].match(stripped):
+            continue
+        if stripped == "❯":
+            break
+        if stripped.endswith("?"):
+            return "waiting_input"
+        break
     # If last content is an assistant response or tool call, it just finished
     if MARKERS["assistant"].match(last_content) or TOOL_CALL_RE.match(last_content):
         return "idle"
@@ -539,14 +556,16 @@ async def get_session(name: str, lines: int = 10000):
     messages = parse_messages(raw)
     title = title_cache.get(name, name)
     chash = content_hash(raw)
+    status = get_session_status(raw)
 
     return {
         "name": name,
         "title": title,
-        "status": get_session_status(raw),
+        "status": status,
         "messages": messages,
         "content_hash": chash,
         "message_count": len(messages),
+        "waiting_input": status == "waiting_input",
     }
 
 
@@ -692,21 +711,24 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
 
     raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", f"-{lines}")
     chash = content_hash(raw)
+    status = get_session_status(raw)
 
     if hash and hash == chash:
         # no changes
         return {
             "has_changes": False,
             "content_hash": chash,
-            "status": get_session_status(raw),
+            "status": status,
+            "waiting_input": status == "waiting_input",
         }
 
     messages = parse_messages(raw)
     return {
         "has_changes": True,
         "content_hash": chash,
-        "status": get_session_status(raw),
+        "status": status,
         "messages": messages,
+        "waiting_input": status == "waiting_input",
     }
 
 

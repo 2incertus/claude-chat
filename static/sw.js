@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-chat-v15';
+const CACHE_NAME = 'claude-chat-v16';
 const SHELL_ASSETS = [
   '/',
   '/static/css/style.css?v=9',

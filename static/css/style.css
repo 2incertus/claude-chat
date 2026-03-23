@@ -361,6 +361,91 @@ body {
 }
 .msg-assistant-text strong { font-weight: 600; }
 .msg-assistant-text em { font-style: italic; }
+
+/* ===== Tables ===== */
+.table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 6px 0;
+}
+.msg-assistant-text table {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  width: 100%;
+  min-width: 280px;
+}
+.msg-assistant-text th,
+.msg-assistant-text td {
+  border: 1px solid var(--border-medium);
+  padding: 6px 10px;
+  text-align: left;
+  white-space: nowrap;
+}
+.msg-assistant-text th {
+  background: var(--surface);
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+.msg-assistant-text td {
+  font-size: 0.8rem;
+}
+.msg-assistant-text tr:nth-child(even) td {
+  background: rgba(255,255,255,0.02);
+}
+:root[data-theme="light"] .msg-assistant-text tr:nth-child(even) td {
+  background: rgba(0,0,0,0.02);
+}
+
+/* ===== Agent status chips ===== */
+.agent-status-chip {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 16px;
+  background: rgba(139, 92, 246, 0.08);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  font-size: 0.75rem;
+  animation: msgIn 150ms ease-out;
+  flex-shrink: 0;
+}
+.agent-status-icon {
+  color: rgba(139, 92, 246, 0.6);
+  font-size: 0.7rem;
+}
+.agent-status-label {
+  font-weight: 600;
+  color: rgba(139, 92, 246, 0.8);
+  font-family: var(--mono);
+}
+.agent-status-name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+.agent-status-state {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.agent-status-state.completed {
+  background: rgba(50, 215, 75, 0.15);
+  color: var(--green);
+}
+.agent-status-state.launched {
+  background: rgba(139, 92, 246, 0.15);
+  color: rgba(139, 92, 246, 0.8);
+}
+.agent-status-state.failed {
+  background: rgba(255, 69, 58, 0.15);
+  color: var(--red);
+}
+
 .msg-assistant-text .code-block {
   display: block;
   background: var(--code-bg);
@@ -1520,4 +1605,69 @@ button:focus-visible { outline-offset: -2px; }
 
   /* Wider scrollbar on desktop */
   ::-webkit-scrollbar { width: 6px; }
+}
+
+/* ===== Waiting input indicator (AskUserQuestion) ===== */
+.status-dot.waiting {
+  background: var(--yellow);
+  animation: waitingPulse 2s ease-in-out infinite;
+}
+@keyframes waitingPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255, 214, 10, 0.4); }
+  50% { opacity: 0.7; box-shadow: 0 0 0 5px rgba(255, 214, 10, 0); }
+}
+.input-area.waiting-input {
+  border-top: 2px solid var(--yellow);
+  box-shadow: 0 -2px 12px rgba(255, 214, 10, 0.1);
+}
+.waiting-input-label {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--yellow);
+  padding: 4px 0 2px;
+  animation: waitingLabelPulse 2s ease-in-out infinite;
+}
+@keyframes waitingLabelPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* Session list: waiting_input status dot */
+.session-card-status.waiting {
+  background: var(--yellow);
+  animation: waitingPulse 2s ease-in-out infinite;
+}
+
+/* ===== Agent sub-items (backgrounded agents) ===== */
+.agent-sub-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 8px;
+  margin: 3px 0;
+  background: rgba(139, 92, 246, 0.06);
+  border-left: 2px solid rgba(139, 92, 246, 0.3);
+  border-radius: 0 6px 6px 0;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+.agent-sub-item-icon {
+  color: rgba(139, 92, 246, 0.6);
+  font-size: 0.7rem;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.agent-sub-item-desc {
+  word-break: break-word;
+  min-width: 0;
+}
+:root[data-theme="light"] .agent-sub-item {
+  background: rgba(139, 92, 246, 0.05);
+  border-left-color: rgba(109, 62, 216, 0.25);
+}
+:root[data-theme="light"] .agent-sub-item-icon {
+  color: rgba(109, 62, 216, 0.5);
 }
