@@ -1649,18 +1649,22 @@
       img.alt = match[1];
       img.loading = 'lazy';
       (function(el, filename) {
-        authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
-          if (r.ok) return r.blob();
-        }).then(function(blob) {
-          if (blob) {
+        function loadImage() {
+          authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.blob();
+          }).then(function(blob) {
             var url = URL.createObjectURL(blob);
             el.src = url;
-            el.addEventListener('click', function(e) {
-              e.stopPropagation();
-              showImageOverlay(url);
-            });
-          }
-        });
+            el.classList.remove('msg-image-error');
+            el.onclick = function(e) { e.stopPropagation(); showImageOverlay(url); };
+          }).catch(function() {
+            el.classList.add('msg-image-error');
+            el.title = 'Tap to retry';
+            el.onclick = function(e) { e.stopPropagation(); el.onclick = null; el.title = ''; loadImage(); };
+          });
+        }
+        loadImage();
       })(img, match[1]);
       imgs.push(img);
     }
@@ -3722,12 +3726,19 @@
 
   // ========== iOS Keyboard Fix ==========
   // Prevent iOS from scrolling the page when keyboard opens
+  function resetScroll() {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', resetScroll);
+  }
   document.addEventListener('focusin', function(e) {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
-      // Reset any scroll iOS might have applied
-      setTimeout(function() { window.scrollTo(0, 0); }, 50);
-      setTimeout(function() { window.scrollTo(0, 0); }, 150);
-      setTimeout(function() { window.scrollTo(0, 0); }, 300);
+      setTimeout(resetScroll, 100);
+      // Also prevent the screen container from scrolling
+      var screen = e.target.closest('.screen');
+      if (screen) setTimeout(function() { screen.scrollTop = 0; }, 100);
     }
   });
 
