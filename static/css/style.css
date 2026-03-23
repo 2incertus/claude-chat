@@ -150,6 +150,15 @@ body {
   text-overflow: ellipsis;
   padding: 0 8px;
 }
+.cost-badge {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  background: var(--surface2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .status-dot {
   width: 10px;
   height: 10px;

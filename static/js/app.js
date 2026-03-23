@@ -180,6 +180,7 @@
 
   var backBtn = document.getElementById('backBtn');
   var chatTitle = document.getElementById('chatTitle');
+  var costBadge = document.getElementById('costBadge');
   var chatStatus = document.getElementById('chatStatus');
   var chatFeed = document.getElementById('chatFeed');
   var typingIndicator = document.getElementById('typingIndicator');
@@ -307,6 +308,7 @@
     stopPolling();
     stopTTS();
     hidePreview();
+    updateCostBadge(null);
 
     if (isDesktop()) {
       // On desktop, keep both panels visible
@@ -765,6 +767,7 @@
         if (!isEditingTitle) chatTitle.textContent = data.title || data.name;
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
@@ -802,6 +805,23 @@
       workingSessionCount = Math.max(1, workingSessionCount + 1);
       updateTabTitle();
     }
+  }
+
+  function updateCostBadge(costInfo) {
+    if (!costBadge) return;
+    if (!costInfo) {
+      costBadge.style.display = 'none';
+      return;
+    }
+    var parts = [];
+    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
+    if (costInfo.context_pct != null) parts.push('CTX ' + costInfo.context_pct + '%');
+    if (parts.length === 0) {
+      costBadge.style.display = 'none';
+      return;
+    }
+    costBadge.textContent = parts.join(' \u00b7 ');
+    costBadge.style.display = '';
   }
 
   function updateWaitingInput(waiting) {
@@ -1785,6 +1805,7 @@
         if (!data) return;
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
@@ -1807,6 +1828,7 @@
       .then(function(data) {
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         checkNtfyTrigger(currentSession, data.status, data.has_changes ? data.messages : null);
 
         if (data.has_changes && data.messages) {
