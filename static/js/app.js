@@ -20,6 +20,9 @@
   var defaultTitle = 'Claude Voice Chat';
   var hasUnreadMessages = false;
 
+  // Auth state
+  var authToken = localStorage.getItem('auth_token') || '';
+
   // Voice state
   var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var hasNativeSTT = !!NativeSR;
@@ -27,6 +30,137 @@
   var finalTranscript = '';
   var isRecording = false;
   var isProcessing = false;
+
+  // ========== Auth Helpers ==========
+  function authFetch(url, options) {
+    options = options || {};
+    if (!options.headers) {
+      options.headers = {};
+    }
+    if (authToken) {
+      options.headers['Authorization'] = 'Bearer ' + authToken;
+    }
+    return fetch(url, options);
+  }
+
+  function showLoginScreen() {
+    var existing = document.querySelector('.login-screen');
+    if (existing) existing.remove();
+
+    var screen = document.createElement('div');
+    screen.className = 'login-screen';
+
+    var card = document.createElement('div');
+    card.className = 'login-card';
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'login-title';
+    titleEl.textContent = 'Claude Chat';
+
+    var pinInput = document.createElement('input');
+    pinInput.className = 'login-input';
+    pinInput.type = 'password';
+    pinInput.placeholder = '----';
+    pinInput.maxLength = 6;
+    pinInput.inputMode = 'numeric';
+    pinInput.pattern = '[0-9]*';
+    pinInput.autocomplete = 'off';
+
+    var errorEl = document.createElement('div');
+    errorEl.className = 'login-error';
+    errorEl.style.visibility = 'hidden';
+    errorEl.textContent = 'Invalid PIN';
+
+    var btn = document.createElement('button');
+    btn.className = 'login-btn';
+    btn.textContent = 'Enter';
+
+    function doLogin() {
+      var pin = pinInput.value.trim();
+      if (!pin) return;
+      btn.textContent = 'Checking...';
+      btn.disabled = true;
+      fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: pin })
+      })
+      .then(function(r) {
+        if (!r.ok) throw new Error('Invalid PIN');
+        return r.json();
+      })
+      .then(function(data) {
+        authToken = data.token;
+        localStorage.setItem('auth_token', authToken);
+        screen.remove();
+        initApp();
+      })
+      .catch(function() {
+        errorEl.style.visibility = 'visible';
+        pinInput.classList.add('shake');
+        btn.textContent = 'Enter';
+        btn.disabled = false;
+        pinInput.value = '';
+        pinInput.focus();
+        setTimeout(function() {
+          pinInput.classList.remove('shake');
+        }, 500);
+      });
+    }
+
+    btn.addEventListener('click', doLogin);
+    pinInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); doLogin(); }
+    });
+
+    card.appendChild(titleEl);
+    card.appendChild(pinInput);
+    card.appendChild(errorEl);
+    card.appendChild(btn);
+    screen.appendChild(card);
+    document.body.appendChild(screen);
+    pinInput.focus();
+  }
+
+  function logout() {
+    authToken = '';
+    localStorage.removeItem('auth_token');
+    stopPolling();
+    stopSessionListPolling();
+    showLoginScreen();
+  }
+
+  function checkAuthAndInit() {
+    if (!authToken) {
+      fetch('/api/auth/check')
+        .then(function(r) {
+          if (r.ok) {
+            initApp();
+          } else {
+            showLoginScreen();
+          }
+        })
+        .catch(function() {
+          initApp();
+        });
+      return;
+    }
+    fetch('/api/auth/check', {
+      headers: { 'Authorization': 'Bearer ' + authToken }
+    })
+    .then(function(r) {
+      if (r.ok) {
+        initApp();
+      } else {
+        authToken = '';
+        localStorage.removeItem('auth_token');
+        showLoginScreen();
+      }
+    })
+    .catch(function() {
+      initApp();
+    });
+  }
 
   // ========== Elements ==========
   var screenList = document.getElementById('screenList');
@@ -242,7 +376,7 @@
 
   // ========== Session List ==========
   function loadSessions() {
-    fetch('/api/sessions')
+    authFetch('/api/sessions')
       .then(function(r) { return r.json(); })
       .then(function(sessions) {
         renderSessionList(sessions);
@@ -358,7 +492,7 @@
         batchBtn.innerHTML = '<span class="btn-spinner"></span> Dismissing...';
         var deadNames = visibleSessions.filter(function(s) { return s.state === 'dead'; }).map(function(s) { return s.name; });
         var promises = deadNames.map(function(n) {
-          return fetch('/api/sessions/' + encodeURIComponent(n), { method: 'DELETE' });
+          return authFetch('/api/sessions/' + encodeURIComponent(n), { method: 'DELETE' });
         });
         Promise.all(promises).then(function() {
           showActionToast('Dismissed ' + deadNames.length + ' session' + (deadNames.length > 1 ? 's' : ''), 'success');
@@ -480,6 +614,10 @@
       wrapper.appendChild(card);
 
       // Swipe gesture + long-press to pin
+      // Note: event listener cleanup is handled implicitly -- old cards and their
+      // wrappers are removed from the DOM at the top of renderSessionList() via
+      // removeChild, which makes them eligible for GC along with their listeners.
+      // All touch listeners use { passive: true } to avoid blocking the main thread.
       var startX = 0, currentX = 0, swiping = false;
       var cardLongPress = null;
       var longPressTriggered = false;
@@ -568,7 +706,7 @@
 
   // ========== Session View ==========
   function loadSession(name) {
-    fetch('/api/sessions/' + encodeURIComponent(name))
+    authFetch('/api/sessions/' + encodeURIComponent(name))
       .then(function(r) {
         if (!r.ok) throw new Error('not found');
         return r.json();
@@ -693,6 +831,47 @@
     });
   }
 
+  // ========== Syntax Highlighting ==========
+  function escHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function highlightSyntax(text, lang) {
+    // Tokenize raw text, then HTML-escape each piece individually
+    var tokens = [];
+    // Order: strings first (so # inside strings is not treated as comment),
+    // then comments, then numbers, then keywords
+    var re = /("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\/\/[^\n]*|#[^\n]*|\b\d+\.?\d*\b|\b(?:function|var|const|let|if|else|for|while|return|import|from|class|def|async|await|try|catch|throw|new|this|self|None|True|False|null|true|false|undefined|export|default|switch|case|break|continue|yield|elif|except|finally|with|as|in|not|and|or|is|lambda|pass|raise|del|global|nonlocal|assert|void|typeof|instanceof|static|extends|super|implements|interface|enum|type|struct|fn|pub|mut|use|mod|crate|impl|trait|where|match|loop|ref|move)\b)/g;
+
+    var lastIndex = 0;
+    var m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > lastIndex) {
+        tokens.push(escHtml(text.substring(lastIndex, m.index)));
+      }
+      var tok = m[0];
+      var cls = '';
+      var c0 = tok.charAt(0);
+      if (c0 === '"' || c0 === "'") {
+        cls = 'syn-str';
+      } else if (c0 === '/' && tok.charAt(1) === '/') {
+        cls = 'syn-cmt';
+      } else if (c0 === '#' && lang !== 'css' && lang !== 'html') {
+        cls = 'syn-cmt';
+      } else if (/^\d/.test(tok)) {
+        cls = 'syn-num';
+      } else {
+        cls = 'syn-kw';
+      }
+      tokens.push('<span class="' + cls + '">' + escHtml(tok) + '</span>');
+      lastIndex = re.lastIndex;
+    }
+    if (lastIndex < text.length) {
+      tokens.push(escHtml(text.substring(lastIndex)));
+    }
+    return tokens.join('');
+  }
+
   // ========== Markdown Renderer ==========
   function renderMarkdown(text) {
     var frag = document.createDocumentFragment();
@@ -740,7 +919,8 @@
         var pre = document.createElement('pre');
         pre.className = 'code-block';
         var code = document.createElement('code');
-        code.textContent = block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        var rawCode = block.content.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+        code.innerHTML = highlightSyntax(rawCode, block.lang || '');
         pre.appendChild(code);
         var copyBtn = document.createElement('button');
         copyBtn.className = 'code-copy-btn';
@@ -761,7 +941,11 @@
         tableWrap.className = 'table-wrap';
         var table = document.createElement('table');
         var tLines = block.lines;
-        var tbody = null;
+        // Hoist tbody creation before row loop to avoid repeated querySelector calls
+        var thead = document.createElement('thead');
+        var tbody = document.createElement('tbody');
+        var hasHeader = false;
+        var hasBody = false;
         for (var ti = 0; ti < tLines.length; ti++) {
           var tl = tLines[ti].replace(/^\|/, '').replace(/\|$/, '');
           var cells = tl.split('|');
@@ -775,14 +959,15 @@
             row.appendChild(cell);
           }
           if (isHeader) {
-            var thead = document.createElement('thead');
             thead.appendChild(row);
-            table.appendChild(thead);
+            hasHeader = true;
           } else {
-            if (!tbody) { tbody = document.createElement('tbody'); table.appendChild(tbody); }
             tbody.appendChild(row);
+            hasBody = true;
           }
         }
+        if (hasHeader) table.appendChild(thead);
+        if (hasBody) table.appendChild(tbody);
         tableWrap.appendChild(table);
         frag.appendChild(tableWrap);
         continue;
@@ -897,6 +1082,29 @@
     return frag;
   }
 
+  // ========== Image Overlay ==========
+  function showImageOverlay(src) {
+    var overlay = document.createElement('div');
+    overlay.className = 'image-overlay';
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'image-overlay-close';
+    closeBtn.textContent = '\u00d7';
+    closeBtn.addEventListener('click', function() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
+    var img = document.createElement('img');
+    img.src = src;
+    img.alt = 'Full size preview';
+    overlay.appendChild(closeBtn);
+    overlay.appendChild(img);
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) {
+        if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      }
+    });
+    document.body.appendChild(overlay);
+  }
+
   function appendToolGroup(tools) {
     // Separate Agent/Skill calls from regular tools
     var agents = [];
@@ -999,12 +1207,37 @@
       } else {
         el.textContent = userContent;
       }
+      // Detect uploaded image paths and show inline preview
+      var imgMatch = userContent.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
+      var imgEl = null;
+      if (imgMatch) {
+        imgEl = document.createElement('img');
+        imgEl.className = 'msg-image';
+        imgEl.src = '/api/uploads/' + encodeURIComponent(imgMatch[1]);
+        imgEl.alt = imgMatch[1];
+        imgEl.loading = 'lazy';
+        (function(src) {
+          imgEl.addEventListener('click', function(e) {
+            e.stopPropagation();
+            showImageOverlay(src);
+          });
+        })(imgEl.src);
+      }
       if (m._pending) {
         var statusEl = document.createElement('div');
         statusEl.className = 'msg-status msg-status-pending';
         statusEl.textContent = 'Sending\u2026';
         wrapper.appendChild(el);
+        if (imgEl) wrapper.appendChild(imgEl);
         wrapper.appendChild(statusEl);
+        if (!animate) wrapper.style.animation = 'none';
+        chatFeed.appendChild(wrapper);
+        return;
+      }
+      // For non-pending user messages with images, use the wrapper
+      if (imgEl) {
+        wrapper.appendChild(el);
+        wrapper.appendChild(imgEl);
         if (!animate) wrapper.style.animation = 'none';
         chatFeed.appendChild(wrapper);
         return;
@@ -1356,7 +1589,7 @@
     var url = '/api/sessions/' + encodeURIComponent(currentSession) + '/poll';
     if (contentHash) url += '?hash=' + encodeURIComponent(contentHash);
 
-    fetch(url)
+    authFetch(url)
       .then(function(r) {
         if (!r.ok) throw new Error('poll fail');
         return r.json();
@@ -1455,15 +1688,21 @@
     }
   }
 
+  // Throttle scroll handler to once per animation frame
+  var scrollThrottleTimer = null;
   chatFeed.addEventListener('scroll', function() {
-    checkScrollPosition();
-    if (isUserNearBottom) {
-      newMsgPill.classList.remove('visible');
-      if (hasUnreadMessages) {
-        hasUnreadMessages = false;
-        updateTabTitle();
+    if (scrollThrottleTimer) return;
+    scrollThrottleTimer = requestAnimationFrame(function() {
+      scrollThrottleTimer = null;
+      checkScrollPosition();
+      if (isUserNearBottom) {
+        newMsgPill.classList.remove('visible');
+        if (hasUnreadMessages) {
+          hasUnreadMessages = false;
+          updateTabTitle();
+        }
       }
-    }
+    });
   }, { passive: true });
 
   newMsgPill.addEventListener('click', function() {
@@ -1557,7 +1796,7 @@
     appendMessage(msg, true, null, -1);
     scrollToBottom(true);
 
-    fetch('/api/sessions/' + encodeURIComponent(currentSession) + '/send', {
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession) + '/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: text })
@@ -1627,7 +1866,7 @@
       if (card) card.classList.add('processing');
     }
 
-    fetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' })
+    authFetch('/api/sessions/' + encodeURIComponent(name) + '/kill', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         showActionToast(data.killed ? 'Session killed' : 'Could not kill -- try again', data.killed ? 'success' : 'error');
@@ -1649,7 +1888,7 @@
       }
     }
 
-    fetch('/api/sessions/' + encodeURIComponent(name) + '/respawn', { method: 'POST' })
+    authFetch('/api/sessions/' + encodeURIComponent(name) + '/respawn', { method: 'POST' })
       .then(function(r) { return r.json(); })
       .then(function(data) {
         if (data.respawned) {
@@ -1676,7 +1915,7 @@
       wrapper.classList.add('dismissing');
     }
 
-    fetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
+    authFetch('/api/sessions/' + encodeURIComponent(name), { method: 'DELETE' })
       .then(function() {
         showActionToast('Session dismissed', 'success');
         setTimeout(loadSessions, 200);
@@ -1744,7 +1983,7 @@
     uploadToast.style.display = 'block';
     var fd = new FormData();
     fd.append('file', f);
-    fetch('/api/upload/' + encodeURIComponent(currentSession), { method: 'POST', body: fd })
+    authFetch('/api/upload/' + encodeURIComponent(currentSession), { method: 'POST', body: fd })
       .then(function(r) { if (!r.ok) throw new Error('upload failed'); return r.json(); })
       .then(function(d) {
         uploadToast.textContent = 'Uploaded!';
@@ -1873,7 +2112,7 @@
   });
 
   function sendNtfy(title, body) {
-    fetch('/api/ntfy', {
+    authFetch('/api/ntfy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: title, body: body, tags: 'robot' })
@@ -2026,7 +2265,7 @@
         var blob = new Blob(audioChunks, { type: mimeType });
         var form = new FormData();
         form.append('file', blob, 'recording.webm');
-        fetch('/api/transcribe', { method: 'POST', body: form })
+        authFetch('/api/transcribe', { method: 'POST', body: form })
           .then(function(r) { return r.json(); })
           .then(function(data) {
             var text = (data.text || '').trim();
@@ -2076,7 +2315,7 @@
       var newTitle = input.value.trim();
       if (newTitle && newTitle !== original) {
         chatTitle.textContent = newTitle;
-        fetch('/api/sessions/' + encodeURIComponent(currentSession) + '/title', {
+        authFetch('/api/sessions/' + encodeURIComponent(currentSession) + '/title', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: newTitle })
@@ -2096,7 +2335,7 @@
 
   // ========== Command Palette ==========
   function fetchCommands() {
-    fetch('/api/commands')
+    authFetch('/api/commands')
       .then(function(r) { return r.json(); })
       .then(function(data) { commandList = data.commands || []; })
       .catch(function() {});
@@ -2167,11 +2406,9 @@
     }
   });
 
-  fetchCommands();
-
   // ========== New Session ==========
   function openNewSession() {
-    fetch('/api/config')
+    authFetch('/api/config')
       .then(function(r) { return r.json(); })
       .then(function(config) {
         while (presetList.firstChild) presetList.removeChild(presetList.firstChild);
@@ -2207,7 +2444,7 @@
   function createSession(path, name) {
     closeNewSession();
     showActionToast('Creating session...', 'info');
-    fetch('/api/sessions', {
+    authFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: path, name: name })
@@ -2266,6 +2503,19 @@
       pollSpeedSetting = value || 'normal';
     } else if (key === 'chatVoice') {
       localStorage.setItem('chatVoice', value || '');
+    } else if (key === 'accentColor') {
+      if (value && value !== 'orange') {
+        document.documentElement.setAttribute('data-accent', value);
+      } else {
+        document.documentElement.removeAttribute('data-accent');
+      }
+    } else if (key === 'fontSize') {
+      document.body.classList.remove('font-small', 'font-large');
+      if (value === 'small') {
+        document.body.classList.add('font-small');
+      } else if (value === 'large') {
+        document.body.classList.add('font-large');
+      }
     }
   }
 
@@ -2274,6 +2524,8 @@
     if (s.theme) applySetting('theme', s.theme);
     if (s.pollSpeed) applySetting('pollSpeed', s.pollSpeed);
     if (s.chatVoice) applySetting('chatVoice', s.chatVoice);
+    if (s.accentColor) applySetting('accentColor', s.accentColor);
+    if (s.fontSize) applySetting('fontSize', s.fontSize);
   }
 
   function openSettings() {
@@ -2319,6 +2571,64 @@
 
     var soundRow = createSettingsRow('Notification Sound', 'toggle', !!s.notifSound, null, function(v) { saveSetting('notifSound', v); });
     settingsPanel.appendChild(soundRow);
+
+    // Accent Color row (swatch picker)
+    var accentRow = document.createElement('div');
+    accentRow.className = 'settings-row';
+    var accentLabel = document.createElement('span');
+    accentLabel.className = 'settings-label';
+    accentLabel.textContent = 'Accent Color';
+    accentRow.appendChild(accentLabel);
+
+    var swatchRow = document.createElement('div');
+    swatchRow.className = 'settings-swatch-row';
+    var accentColors = ['orange', 'blue', 'green', 'purple', 'red'];
+    var currentAccent = s.accentColor || 'orange';
+    for (var ai = 0; ai < accentColors.length; ai++) {
+      (function(color) {
+        var swatch = document.createElement('div');
+        swatch.className = 'settings-swatch' + (color === currentAccent ? ' active' : '');
+        swatch.setAttribute('data-color', color);
+        swatch.title = color.charAt(0).toUpperCase() + color.slice(1);
+        swatch.addEventListener('click', function() {
+          var allSwatches = swatchRow.querySelectorAll('.settings-swatch');
+          for (var si = 0; si < allSwatches.length; si++) allSwatches[si].classList.remove('active');
+          swatch.classList.add('active');
+          saveSetting('accentColor', color);
+        });
+        swatchRow.appendChild(swatch);
+      })(accentColors[ai]);
+    }
+    accentRow.appendChild(swatchRow);
+    settingsPanel.appendChild(accentRow);
+
+    // Font Size row
+    var fontRow = createSettingsRow('Font Size', 'select', s.fontSize || 'default', [
+      { value: 'small', label: 'Small' },
+      { value: 'default', label: 'Default' },
+      { value: 'large', label: 'Large' }
+    ], function(v) { saveSetting('fontSize', v); });
+    settingsPanel.appendChild(fontRow);
+
+    // Log Out row
+    var logoutRow = document.createElement('div');
+    logoutRow.className = 'settings-row';
+    var logoutLabel = document.createElement('span');
+    logoutLabel.className = 'settings-label';
+    logoutLabel.textContent = 'Log Out';
+    logoutRow.appendChild(logoutLabel);
+    var logoutBtn = document.createElement('button');
+    logoutBtn.className = 'login-btn';
+    logoutBtn.style.width = 'auto';
+    logoutBtn.style.padding = '8px 20px';
+    logoutBtn.style.fontSize = '0.82rem';
+    logoutBtn.textContent = 'Log Out';
+    logoutBtn.addEventListener('click', function() {
+      closeSettings();
+      logout();
+    });
+    logoutRow.appendChild(logoutBtn);
+    settingsPanel.appendChild(logoutRow);
   }
 
   function createSettingsRow(label, type, currentValue, options, onChange) {
@@ -2356,12 +2666,98 @@
   gearBtn.addEventListener('click', openSettings);
   settingsBackdrop.addEventListener('click', closeSettings);
 
+
+  // ========== Session History ==========
+  var historyBtn = document.getElementById('historyBtn');
+  var historyBackdrop = document.getElementById('historyBackdrop');
+  var historyPanel = document.getElementById('historyPanel');
+  var historyList = document.getElementById('historyList');
+
+  function formatHistoryTime(epochMs) {
+    if (!epochMs) return '';
+    var d = new Date(epochMs);
+    var now = new Date();
+    var diffMs = now - d;
+    var diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 1) return 'just now';
+    if (diffMin < 60) return diffMin + 'm ago';
+    var diffHrs = Math.floor(diffMin / 60);
+    if (diffHrs < 24) return diffHrs + 'h ago';
+    var diffDays = Math.floor(diffHrs / 24);
+    if (diffDays < 7) return diffDays + 'd ago';
+    return d.toLocaleDateString();
+  }
+
+  function openHistory() {
+    while (historyList.firstChild) historyList.removeChild(historyList.firstChild);
+    var loadingEl = document.createElement('div');
+    loadingEl.style.cssText = 'text-align:center;color:var(--text-muted);padding:20px;font-size:0.85rem;';
+    loadingEl.textContent = 'Loading...';
+    historyList.appendChild(loadingEl);
+    historyBackdrop.classList.add('visible');
+    historyPanel.classList.add('visible');
+
+    authFetch('/api/history')
+      .then(function(r) { return r.json(); })
+      .then(function(entries) {
+        while (historyList.firstChild) historyList.removeChild(historyList.firstChild);
+        if (!entries || entries.length === 0) {
+          var emptyEl = document.createElement('div');
+          emptyEl.style.cssText = 'text-align:center;color:var(--text-muted);padding:20px;font-size:0.85rem;';
+          emptyEl.textContent = 'No dismissed sessions yet';
+          historyList.appendChild(emptyEl);
+          return;
+        }
+        for (var i = 0; i < entries.length; i++) {
+          var entry = entries[i];
+          var item = document.createElement('div');
+          item.className = 'history-item';
+
+          var itemTop = document.createElement('div');
+          itemTop.className = 'history-item-top';
+          var itemTitle = document.createElement('div');
+          itemTitle.className = 'history-item-title';
+          itemTitle.textContent = entry.title || entry.name;
+          var itemTime = document.createElement('div');
+          itemTime.className = 'history-item-time';
+          itemTime.textContent = formatHistoryTime(entry.dismissed_at);
+          itemTop.appendChild(itemTitle);
+          itemTop.appendChild(itemTime);
+          item.appendChild(itemTop);
+
+          if (entry.preview) {
+            var itemPreview = document.createElement('div');
+            itemPreview.className = 'history-item-preview';
+            itemPreview.textContent = entry.preview;
+            item.appendChild(itemPreview);
+          }
+
+          historyList.appendChild(item);
+        }
+      })
+      .catch(function() {
+        while (historyList.firstChild) historyList.removeChild(historyList.firstChild);
+        var errEl = document.createElement('div');
+        errEl.style.cssText = 'text-align:center;color:var(--text-muted);padding:20px;font-size:0.85rem;';
+        errEl.textContent = 'Failed to load history';
+        historyList.appendChild(errEl);
+      });
+  }
+
+  function closeHistory() {
+    historyBackdrop.classList.remove('visible');
+    historyPanel.classList.remove('visible');
+  }
+
+  historyBtn.addEventListener('click', openHistory);
+  historyBackdrop.addEventListener('click', closeHistory);
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
     var tag = (e.target.tagName || '').toLowerCase();
     var isInput = (tag === 'input' || tag === 'textarea' || tag === 'select');
     var settingsOpen = settingsPanel.classList.contains('visible');
     var newSessionOpen = newSessionPanel.classList.contains('visible');
+    var historyOpen = historyPanel.classList.contains('visible');
     var paletteOpen = cmdPalette.classList.contains('visible');
 
     // Escape: close settings/new-session/command-palette, or go back to session list
@@ -2373,6 +2769,11 @@
       }
       if (newSessionOpen) {
         closeNewSession();
+        e.preventDefault();
+        return;
+      }
+      if (historyOpen) {
+        closeHistory();
         e.preventDefault();
         return;
       }
@@ -2457,6 +2858,19 @@
   });
 
   // ========== Init ==========
+  function initApp() {
+    loadSessions();
+    startSessionListPolling();
+    fetchCommands();
+
+    // On desktop, show empty state on initial load
+    if (isDesktop()) {
+      screenList.className = 'screen';
+      screenChat.className = 'screen';
+      showDesktopEmptyState();
+    }
+  }
+
   window.addEventListener('resize', function() {
     updatePillPosition();
     // Handle layout changes on resize (e.g. rotating tablet)
@@ -2478,15 +2892,11 @@
       }
     }
   });
-  loadSettings();
-  loadSessions();
-  startSessionListPolling();
 
-  // On desktop, show empty state on initial load
-  if (isDesktop()) {
-    screenList.className = 'screen';
-    screenChat.className = 'screen';
-    showDesktopEmptyState();
-  }
+  // Apply visual settings immediately (before auth)
+  loadSettings();
+
+  // Auth check, then init
+  checkAuthAndInit();
 
 })();

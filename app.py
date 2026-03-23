@@ -3,6 +3,7 @@ import re
 import json
 import glob
 import hashlib
+import secrets
 import subprocess
 import asyncio
 import time
@@ -19,6 +20,13 @@ from pydantic import BaseModel
 # Config
 # ---------------------------------------------------------------------------
 SOCKET = os.environ.get("TMUX_SOCKET", "/tmp/tmux-1000/default")
+
+# ---------------------------------------------------------------------------
+# Auth (PIN-based) -- set PIN_HASH env var to enable, omit to disable
+# ---------------------------------------------------------------------------
+PIN_HASH = os.environ.get("PIN_HASH", "")  # SHA-256 hex digest of the PIN
+AUTH_ENABLED = bool(PIN_HASH)
+valid_tokens: set[str] = set()
 CLAUDE_DATA_DIR = os.environ.get("CLAUDE_DATA_DIR", "/claude-data")
 LITELLM_URL = "http://host.docker.internal:4000/v1/chat/completions"
 
@@ -89,6 +97,33 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class AuthMiddleware(BaseHTTPMiddleware):
+    """Require Bearer token on /api/ routes (except /api/auth and /health)."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not AUTH_ENABLED:
+            return await call_next(request)
+
+        path = request.url.path
+        # Allow through: static files, index, health, manifest, auth endpoints
+        if not path.startswith("/api/"):
+            return await call_next(request)
+        if path in ("/api/auth", "/api/auth/check") or path == "/health":
+            return await call_next(request)
+        if path.startswith("/api/uploads/"):
+            return await call_next(request)
+
+        # Check Bearer token
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            if token in valid_tokens:
+                return await call_next(request)
+
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+
+app.add_middleware(AuthMiddleware)
 app.add_middleware(NoCacheStaticMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -443,6 +478,38 @@ def get_session_status(raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+class AuthBody(BaseModel):
+    pin: str
+
+
+@app.post("/api/auth")
+async def auth_login(body: AuthBody):
+    if not AUTH_ENABLED:
+        return {"token": "auth-disabled"}
+    pin_hash = hashlib.sha256(body.pin.encode()).hexdigest()
+    if pin_hash != PIN_HASH:
+        raise HTTPException(status_code=401, detail="Invalid PIN")
+    token = secrets.token_hex(32)
+    valid_tokens.add(token)
+    return {"token": token}
+
+
+@app.get("/api/auth/check")
+async def auth_check(request: Request):
+    if not AUTH_ENABLED:
+        return {"authenticated": True}
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        if token in valid_tokens:
+            return {"authenticated": True}
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# ---------------------------------------------------------------------------
 # API endpoints
 # ---------------------------------------------------------------------------
 
@@ -675,6 +742,20 @@ async def dismiss_session(name: str):
     validate_session_name(name)
     if not _session_exists(name):
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Save session info to history before killing
+    session_title = title_cache.get(name, name)
+    preview = ""
+    try:
+        raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-50")
+        msgs = parse_messages(raw)
+        asst = [m for m in msgs if m["role"] == "assistant"]
+        if asst:
+            preview = asst[-1]["content"][:200]
+    except RuntimeError:
+        pass
+    _add_to_history(name, session_title, preview)
+
     run_tmux("kill-session", "-t", name)
     return {"dismissed": True}
 
@@ -764,6 +845,86 @@ async def upload_file(session_name: str, file: UploadFile = File(...)):
     host_path = f"/srv/appdata/claude-chat/uploads/{filename}"
 
     return {"uploaded": True, "filename": filename, "path": host_path}
+
+
+# ---------------------------------------------------------------------------
+# Uploaded image serving
+# ---------------------------------------------------------------------------
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+IMAGE_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+@app.get("/api/uploads/{filename}")
+async def serve_upload(filename: str):
+    """Serve an uploaded image file. Only image types are allowed."""
+    # Validate filename to prevent path traversal attacks
+    safe = os.path.basename(filename)
+    if safe != filename or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    ext = os.path.splitext(safe)[1].lower()
+    if ext not in IMAGE_EXTENSIONS:
+        raise HTTPException(status_code=403, detail="Only image files can be served")
+
+    filepath = os.path.join(UPLOAD_DIR, safe)
+    if not os.path.isfile(filepath):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(
+        filepath,
+        media_type=IMAGE_CONTENT_TYPES.get(ext, "application/octet-stream"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session history
+# ---------------------------------------------------------------------------
+
+HISTORY_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "history.json")
+HISTORY_MAX = 50
+
+
+def _load_history() -> list[dict]:
+    try:
+        with open(HISTORY_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def _save_history(entries: list[dict]) -> None:
+    os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
+    tmp = HISTORY_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(entries[-HISTORY_MAX:], f)
+    os.replace(tmp, HISTORY_FILE)
+
+
+def _add_to_history(name: str, title: str, preview: str) -> None:
+    entries = _load_history()
+    entries.append({
+        "name": name,
+        "title": title,
+        "preview": preview[:200] if preview else "",
+        "dismissed_at": int(time.time() * 1000),
+    })
+    _save_history(entries[-HISTORY_MAX:])
+
+
+@app.get("/api/history")
+async def get_history():
+    """Return the last 20 dismissed sessions."""
+    entries = _load_history()
+    # Return most recent first, limited to 20
+    return entries[-20:][::-1]
 
 
 @app.post("/api/ntfy")

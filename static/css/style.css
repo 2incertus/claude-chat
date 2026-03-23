@@ -1808,3 +1808,324 @@ button:focus-visible { outline-offset: -2px; }
   color: var(--text-dim);
   margin-bottom: 4px;
 }
+
+/* ===== Login Screen (PIN auth) ===== */
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: loginFadeIn 300ms ease-out;
+}
+@keyframes loginFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.login-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 32px 28px;
+  width: 280px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+  border: 1px solid var(--border-medium);
+}
+.login-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.login-input {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 1.2rem;
+  font-family: inherit;
+  text-align: center;
+  letter-spacing: 8px;
+  outline: none;
+  transition: border-color 200ms;
+}
+.login-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.login-btn {
+  width: 100%;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: opacity 150ms, transform 100ms;
+}
+.login-btn:active {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+.login-error {
+  color: var(--red);
+  font-size: 0.82rem;
+  font-weight: 500;
+  min-height: 1.2em;
+  text-align: center;
+  animation: loginShake 400ms ease;
+}
+@keyframes loginShake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+.login-input.shake {
+  animation: loginShake 400ms ease;
+  border-color: var(--red);
+}
+
+/* ===== Syntax Highlighting (code blocks) ===== */
+.code-block .syn-kw {
+  color: #C084FC;
+  font-weight: 500;
+}
+.code-block .syn-str {
+  color: #4ADE80;
+}
+.code-block .syn-cmt {
+  color: rgba(232, 230, 227, 0.35);
+  font-style: italic;
+}
+.code-block .syn-num {
+  color: #FB923C;
+}
+:root[data-theme="light"] .code-block .syn-kw {
+  color: #7C3AED;
+}
+:root[data-theme="light"] .code-block .syn-str {
+  color: #16A34A;
+}
+:root[data-theme="light"] .code-block .syn-cmt {
+  color: rgba(26, 26, 26, 0.4);
+}
+:root[data-theme="light"] .code-block .syn-num {
+  color: #EA580C;
+}
+
+/* ===== Theme Accent Colors ===== */
+:root[data-accent="blue"] {
+  --accent: #3B82F6;
+  --accent-glow: rgba(59, 130, 246, 0.2);
+}
+:root[data-accent="green"] {
+  --accent: #22C55E;
+  --accent-glow: rgba(34, 197, 94, 0.2);
+}
+:root[data-accent="purple"] {
+  --accent: #A855F7;
+  --accent-glow: rgba(168, 85, 247, 0.2);
+}
+:root[data-accent="red"] {
+  --accent: #EF4444;
+  --accent-glow: rgba(239, 68, 68, 0.2);
+}
+/* orange is default, no override needed */
+
+/* User message bubble should follow accent */
+:root[data-accent="blue"] .msg-user { background: #2563EB; }
+:root[data-accent="green"] .msg-user { background: #16A34A; }
+:root[data-accent="purple"] .msg-user { background: #9333EA; }
+:root[data-accent="red"] .msg-user { background: #DC2626; }
+
+/* ===== Font Size Options ===== */
+body.font-small { font-size: 14px; }
+body.font-large { font-size: 18px; }
+
+/* ===== Settings color swatch row ===== */
+.settings-swatch-row {
+  display: flex;
+  gap: 8px;
+}
+.settings-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 100ms, border-color 150ms;
+  position: relative;
+}
+.settings-swatch:active { transform: scale(0.9); }
+.settings-swatch.active {
+  border-color: var(--text);
+}
+.settings-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: inherit;
+}
+.settings-swatch[data-color="orange"] { background: #E8734A; }
+.settings-swatch[data-color="blue"] { background: #3B82F6; }
+.settings-swatch[data-color="green"] { background: #22C55E; }
+.settings-swatch[data-color="purple"] { background: #A855F7; }
+.settings-swatch[data-color="red"] { background: #EF4444; }
+
+/* ===== Inline image previews ===== */
+.msg-image {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 12px;
+  margin-top: 6px;
+  cursor: pointer;
+  object-fit: cover;
+  display: block;
+  transition: opacity 150ms;
+}
+.msg-image:active {
+  opacity: 0.7;
+}
+
+/* Image overlay (full-screen expanded view) */
+.image-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: overlayFadeIn 200ms ease-out;
+  touch-action: pinch-zoom;
+}
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.image-overlay img {
+  max-width: 95vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+  touch-action: pinch-zoom;
+}
+.image-overlay-close {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top, 16px));
+  right: 16px;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  color: white;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-size: 1.4rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  z-index: 201;
+  transition: background 150ms;
+}
+.image-overlay-close:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ===== History button ===== */
+.history-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  touch-action: manipulation;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 150ms;
+}
+.history-btn:active { color: var(--text); }
+
+/* ===== History panel ===== */
+.history-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms;
+}
+.history-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.history-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border-radius: 20px 20px 0 0;
+  padding: 12px 20px max(16px, env(safe-area-inset-bottom, 16px));
+  z-index: 51;
+  transform: translateY(100%);
+  transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+  max-height: 65vh;
+  overflow-y: auto;
+}
+.history-panel.visible { transform: translateY(0); }
+
+/* ===== History items ===== */
+.history-item {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.history-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.history-item-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-item-time {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.history-item-preview {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
