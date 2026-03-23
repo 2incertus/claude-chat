@@ -1101,43 +1101,37 @@ async def get_history():
 # ---------------------------------------------------------------------------
 # Server-side settings (synced across devices)
 # ---------------------------------------------------------------------------
-SETTINGS_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "settings.json")
-
 SYNCED_KEYS = {
     "pinned_sessions", "session_folders", "hidden_sessions",
     "ntfy_sessions", "claude_chat_settings", "chatVoice",
 }
 
 
-def _load_settings() -> dict:
-    try:
-        with open(SETTINGS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_settings(data: dict) -> None:
-    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    tmp = SETTINGS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, SETTINGS_FILE)
+async def _load_settings() -> dict:
+    result = {}
+    async with db.execute("SELECT key, value FROM settings") as cursor:
+        async for row in cursor:
+            try:
+                result[row["key"]] = json.loads(row["value"])
+            except Exception:
+                result[row["key"]] = row["value"]
+    return result
 
 
 @app.get("/api/settings")
 async def get_settings():
-    return _load_settings()
+    return await _load_settings()
 
 
 @app.put("/api/settings")
 async def put_settings(body: dict):
-    # Merge: only accept known keys, plus starred_* keys
-    current = _load_settings()
     for key, val in body.items():
         if key in SYNCED_KEYS or key.startswith("starred_"):
-            current[key] = val
-    _save_settings(current)
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, json.dumps(val))
+            )
+    await db.commit()
     return {"ok": True}
 
 
