@@ -446,15 +446,134 @@
     loadSessions();
   }
 
+  // ========== Session Folder Helpers ==========
+  function getSessionFolders() {
+    try { return JSON.parse(localStorage.getItem('session_folders') || '{}'); } catch(e) { return {}; }
+  }
+  function setSessionFolder(sessionName, folder) {
+    var folders = getSessionFolders();
+    if (folder) folders[sessionName] = folder;
+    else delete folders[sessionName];
+    localStorage.setItem('session_folders', JSON.stringify(folders));
+  }
+  function getCollapsedFolders() {
+    try { return JSON.parse(localStorage.getItem('collapsed_folders') || '[]'); } catch(e) { return []; }
+  }
+  function toggleFolderCollapsed(folderName) {
+    var collapsed = getCollapsedFolders();
+    var idx = collapsed.indexOf(folderName);
+    if (idx >= 0) collapsed.splice(idx, 1);
+    else collapsed.push(folderName);
+    localStorage.setItem('collapsed_folders', JSON.stringify(collapsed));
+    return idx < 0;
+  }
+
+  function createFolderHeader(name, count, isCollapsed) {
+    var header = document.createElement('div');
+    header.className = 'folder-header' + (isCollapsed ? ' collapsed' : '');
+    header.setAttribute('data-folder', name);
+    var chevron = document.createElement('span');
+    chevron.className = 'folder-chevron';
+    chevron.textContent = '\u25B6';
+    var label = document.createElement('span');
+    label.textContent = ' ' + name + ' ';
+    var badge = document.createElement('span');
+    badge.className = 'folder-count';
+    badge.textContent = count;
+    header.appendChild(chevron);
+    header.appendChild(label);
+    header.appendChild(badge);
+    header.addEventListener('click', function() {
+      var nowCollapsed = toggleFolderCollapsed(name);
+      header.classList.toggle('collapsed', nowCollapsed);
+      var next = header.nextElementSibling;
+      while (next && !next.classList.contains('folder-header')) {
+        next.style.display = nowCollapsed ? 'none' : '';
+        next = next.nextElementSibling;
+      }
+    });
+    return header;
+  }
+
+  function showFolderPicker(sessionName, anchorEl) {
+    var existing = document.querySelector('.folder-picker-overlay');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'folder-picker-overlay';
+    overlay.addEventListener('click', function() { overlay.remove(); });
+
+    var picker = document.createElement('div');
+    picker.className = 'folder-picker';
+    picker.addEventListener('click', function(e) { e.stopPropagation(); });
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'folder-picker-title';
+    titleEl.textContent = 'Move to folder';
+    picker.appendChild(titleEl);
+
+    var currentFolder = getSessionFolders()[sessionName] || '';
+    var presets = ['', 'Active', 'Monitoring', 'Archive'];
+    presets.forEach(function(f) {
+      var btn = document.createElement('button');
+      btn.className = 'folder-picker-option' + (currentFolder === f ? ' selected' : '');
+      btn.textContent = f || 'None';
+      btn.addEventListener('click', function() {
+        setSessionFolder(sessionName, f);
+        overlay.remove();
+        showActionToast(f ? 'Moved to ' + f : 'Removed from folder', 'success');
+        loadSessions();
+      });
+      picker.appendChild(btn);
+    });
+
+    var sep = document.createElement('div');
+    sep.className = 'folder-picker-sep';
+    picker.appendChild(sep);
+
+    var customRow = document.createElement('div');
+    customRow.className = 'folder-picker-custom';
+    var customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.placeholder = 'Custom folder...';
+    customInput.className = 'folder-picker-input';
+    var customBtn = document.createElement('button');
+    customBtn.className = 'folder-picker-go';
+    customBtn.textContent = 'Go';
+    customBtn.addEventListener('click', function() {
+      var val = customInput.value.trim();
+      if (val) {
+        setSessionFolder(sessionName, val);
+        overlay.remove();
+        showActionToast('Moved to ' + val, 'success');
+        loadSessions();
+      }
+    });
+    customInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') customBtn.click();
+    });
+    customRow.appendChild(customInput);
+    customRow.appendChild(customBtn);
+    picker.appendChild(customRow);
+
+    overlay.appendChild(picker);
+    document.body.appendChild(overlay);
+    customInput.focus();
+  }
+
   function renderSessionList(sessions) {
     // Remove old batch action button
     var oldBatch = sessionListEl.parentNode.querySelector('.batch-action-btn');
     if (oldBatch) oldBatch.remove();
 
-    // Remove old groups, wrappers, and bare cards
+    // Remove old groups, folder headers, wrappers, and bare cards
     var oldGroups = sessionListEl.querySelectorAll('.session-group');
     for (var i = 0; i < oldGroups.length; i++) {
       sessionListEl.removeChild(oldGroups[i]);
+    }
+    var oldFolderHeaders = sessionListEl.querySelectorAll('.folder-header');
+    for (var i = 0; i < oldFolderHeaders.length; i++) {
+      sessionListEl.removeChild(oldFolderHeaders[i]);
     }
     var oldWrappers = sessionListEl.querySelectorAll('.session-card-wrapper');
     for (var i = 0; i < oldWrappers.length; i++) {
@@ -581,6 +700,20 @@
         if (s.state === 'dead') { dismissSession(s.name); } else { killSession(s.name); }
       });
       actions.appendChild(actionBtn);
+      var folderBtn = document.createElement('button');
+      folderBtn.className = 'swipe-action-btn folder';
+      folderBtn.textContent = 'Folder';
+      folderBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        // Reset swipe position
+        var cardEl = wrapper.querySelector('.session-card');
+        if (cardEl) {
+          cardEl.style.transition = 'transform 200ms ease-out';
+          cardEl.style.transform = 'translateX(0)';
+        }
+        showFolderPicker(s.name, folderBtn);
+      });
+      actions.appendChild(folderBtn);
       wrapper.appendChild(actions);
 
       var isPinned = pinned.indexOf(s.name) >= 0;
@@ -670,7 +803,7 @@
         var dx = currentX - startX;
         var dy = Math.abs(e.touches[0].clientY - startY);
         if ((Math.abs(dx) > 10 || dy > 10) && cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
-        if (dx < 0) card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
+        if (dx < 0) card.style.transform = 'translateX(' + Math.max(dx, -160) + 'px)';
       }, { passive: true });
       card.addEventListener('touchend', function() {
         if (cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
@@ -678,7 +811,7 @@
         swiping = false;
         card.style.transition = 'transform 200ms ease-out';
         var dx = currentX - startX;
-        card.style.transform = dx < -60 ? 'translateX(-80px)' : 'translateX(0)';
+        card.style.transform = dx < -60 ? 'translateX(-140px)' : 'translateX(0)';
       }, { passive: true });
 
       return wrapper;
@@ -697,50 +830,92 @@
     var collapsedGroups = {};
     try { collapsedGroups = JSON.parse(localStorage.getItem('collapsed_groups') || '{}'); } catch(e) {}
 
-    // If only one group, render flat (no group headers)
-    if (groupOrder.length <= 1) {
-      visibleSessions.forEach(function(s) {
-        sessionListEl.appendChild(buildCardWrapper(s));
-      });
+    // Build all card wrappers keyed by session name
+    var allWrappers = [];
+    visibleSessions.forEach(function(s) {
+      allWrappers.push({ session: s, wrapper: buildCardWrapper(s) });
+    });
+
+    // Separate sessions by folder assignment
+    var sessionFolders = getSessionFolders();
+    var ungrouped = [];
+    var folderGroups = {};
+    var folderOrder = [];
+    allWrappers.forEach(function(item) {
+      var folder = sessionFolders[item.session.name];
+      if (folder) {
+        if (!folderGroups[folder]) { folderGroups[folder] = []; folderOrder.push(folder); }
+        folderGroups[folder].push(item);
+      } else {
+        ungrouped.push(item);
+      }
+    });
+
+    var hasFolders = folderOrder.length > 0;
+    var collapsedFoldersList = getCollapsedFolders();
+
+    if (!hasFolders) {
+      // No folder assignments -- use original cwd grouping
+      if (groupOrder.length <= 1) {
+        visibleSessions.forEach(function(s) {
+          var match = allWrappers.filter(function(w) { return w.session === s; })[0];
+          if (match) sessionListEl.appendChild(match.wrapper);
+        });
+      } else {
+        groupOrder.forEach(function(groupPath) {
+          var groupSessions = groups[groupPath];
+          var groupEl = document.createElement('div');
+          groupEl.className = 'session-group' + (collapsedGroups[groupPath] ? ' collapsed' : '');
+
+          var header = document.createElement('div');
+          header.className = 'session-group-header';
+          var chevron = document.createElement('span');
+          chevron.className = 'session-group-chevron';
+          chevron.textContent = '\u25BC';
+          var pathEl = document.createElement('span');
+          pathEl.className = 'session-group-path';
+          var displayPath = groupPath.replace(/^\/home\/[^/]+\//, '~/');
+          pathEl.textContent = displayPath;
+          var countEl = document.createElement('span');
+          countEl.className = 'session-group-count';
+          countEl.textContent = '(' + groupSessions.length + ')';
+          header.appendChild(chevron);
+          header.appendChild(pathEl);
+          header.appendChild(countEl);
+
+          header.addEventListener('click', function() {
+            var isCollapsed = groupEl.classList.toggle('collapsed');
+            collapsedGroups[groupPath] = isCollapsed;
+            try { localStorage.setItem('collapsed_groups', JSON.stringify(collapsedGroups)); } catch(e) {}
+          });
+
+          groupEl.appendChild(header);
+
+          var itemsEl = document.createElement('div');
+          itemsEl.className = 'session-group-items';
+          groupSessions.forEach(function(s) {
+            var match = allWrappers.filter(function(w) { return w.session === s; })[0];
+            if (match) itemsEl.appendChild(match.wrapper);
+          });
+          groupEl.appendChild(itemsEl);
+          sessionListEl.appendChild(groupEl);
+        });
+      }
     } else {
-      // Render grouped
-      groupOrder.forEach(function(groupPath) {
-        var groupSessions = groups[groupPath];
-        var groupEl = document.createElement('div');
-        groupEl.className = 'session-group' + (collapsedGroups[groupPath] ? ' collapsed' : '');
+      // Folder-based grouping: ungrouped first, then each folder
+      ungrouped.forEach(function(item) {
+        sessionListEl.appendChild(item.wrapper);
+      });
 
-        var header = document.createElement('div');
-        header.className = 'session-group-header';
-        var chevron = document.createElement('span');
-        chevron.className = 'session-group-chevron';
-        chevron.textContent = '\u25BC';
-        var pathEl = document.createElement('span');
-        pathEl.className = 'session-group-path';
-        // Shorten home dir
-        var displayPath = groupPath.replace(/^\/home\/[^/]+\//, '~/');
-        pathEl.textContent = displayPath;
-        var countEl = document.createElement('span');
-        countEl.className = 'session-group-count';
-        countEl.textContent = '(' + groupSessions.length + ')';
-        header.appendChild(chevron);
-        header.appendChild(pathEl);
-        header.appendChild(countEl);
-
-        header.addEventListener('click', function() {
-          var isCollapsed = groupEl.classList.toggle('collapsed');
-          collapsedGroups[groupPath] = isCollapsed;
-          try { localStorage.setItem('collapsed_groups', JSON.stringify(collapsedGroups)); } catch(e) {}
+      folderOrder.forEach(function(folderName) {
+        var items = folderGroups[folderName];
+        var isCollapsed = collapsedFoldersList.indexOf(folderName) >= 0;
+        var fHeader = createFolderHeader(folderName, items.length, isCollapsed);
+        sessionListEl.appendChild(fHeader);
+        items.forEach(function(item) {
+          item.wrapper.style.display = isCollapsed ? 'none' : '';
+          sessionListEl.appendChild(item.wrapper);
         });
-
-        groupEl.appendChild(header);
-
-        var itemsEl = document.createElement('div');
-        itemsEl.className = 'session-group-items';
-        groupSessions.forEach(function(s) {
-          itemsEl.appendChild(buildCardWrapper(s));
-        });
-        groupEl.appendChild(itemsEl);
-        sessionListEl.appendChild(groupEl);
       });
     }
 

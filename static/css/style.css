@@ -307,6 +307,119 @@ body {
   display: none;
 }
 
+/* ===== Session Folders ===== */
+.folder-header {
+  padding: 8px 16px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.folder-header:hover { color: var(--text-dim); }
+.folder-chevron {
+  transition: transform 0.2s;
+  display: inline-block;
+  font-size: 0.55rem;
+}
+.folder-header:not(.collapsed) .folder-chevron { transform: rotate(90deg); }
+.folder-count {
+  background: var(--surface2);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 0.6rem;
+  margin-left: 2px;
+}
+.swipe-action-btn.folder {
+  background: var(--accent, #e8734a);
+  opacity: 0.85;
+}
+.folder-picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.folder-picker {
+  background: var(--surface2);
+  border: 1px solid var(--border-medium);
+  border-radius: 12px;
+  padding: 12px 0;
+  min-width: 220px;
+  max-width: 280px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.folder-picker-title {
+  padding: 4px 16px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.folder-picker-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 0.82rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.folder-picker-option:hover { background: var(--surface3); }
+.folder-picker-option.selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+.folder-picker-sep {
+  height: 1px;
+  background: var(--border-medium);
+  margin: 6px 12px;
+}
+.folder-picker-custom {
+  display: flex;
+  gap: 6px;
+  padding: 6px 12px;
+}
+.folder-picker-input {
+  flex: 1;
+  background: var(--surface1);
+  border: 1px solid var(--border-medium);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+}
+.folder-picker-input:focus {
+  border-color: var(--accent);
+}
+.folder-picker-go {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.folder-picker-go:hover { opacity: 0.9; }
+
 /* ===== Session List ===== */
 .session-list {
   flex: 1;
