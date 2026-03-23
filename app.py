@@ -453,23 +453,17 @@ def get_session_status(raw: str) -> str:
         return "idle"
     if MARKERS["status"].match(last_content) or MARKERS["divider"].match(last_content):
         return "idle"
-    # Check for AskUserQuestion: if the last meaningful assistant/continuation line
-    # ends with '?' and there's no user prompt after it, Claude is waiting for input.
-    # Walk backwards to find the last meaningful content line.
-    for cl in reversed(content_lines):
-        stripped = cl.strip()
-        if not stripped:
-            continue
-        # Skip status bar remnants and markers
-        if STATUS_BAR_RE.search(stripped):
-            continue
-        if MARKERS["status"].match(stripped) or MARKERS["divider"].match(stripped):
-            continue
-        if stripped == "❯":
-            break
-        if stripped.endswith("?"):
-            return "waiting_input"
-        break
+    # Check for AskUserQuestion / interactive prompts from Claude Code.
+    # Real waiting indicators are specific UI patterns, NOT just "ends with ?".
+    # Claude Code shows these when genuinely waiting for user selection:
+    #   - "Enter to select" (AskUserQuestion menu)
+    #   - "(y/n)" or "(Y/n)" permission prompts
+    #   - "Do you want to proceed?" type prompts with ❯ absent
+    tail_text = "\n".join(cl.strip() for cl in content_lines[-8:])
+    if "Enter to select" in tail_text:
+        return "waiting_input"
+    if re.search(r"\([Yy]/[Nn]\)", tail_text):
+        return "waiting_input"
     # If last content is an assistant response or tool call, it just finished
     if MARKERS["assistant"].match(last_content) or TOOL_CALL_RE.match(last_content):
         return "idle"
