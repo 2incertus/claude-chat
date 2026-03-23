@@ -181,6 +181,7 @@
   var backBtn = document.getElementById('backBtn');
   var chatTitle = document.getElementById('chatTitle');
   var costBadge = document.getElementById('costBadge');
+  var bottomInfo = document.getElementById('bottomInfo');
   var chatStatus = document.getElementById('chatStatus');
   var chatFeed = document.getElementById('chatFeed');
   var typingIndicator = document.getElementById('typingIndicator');
@@ -1025,18 +1026,18 @@
   function updateCostBadge(costInfo) {
     if (!costBadge) return;
     if (!costInfo) {
-      costBadge.style.display = 'none';
+      if (bottomInfo) bottomInfo.style.display = 'none';
       return;
     }
     var parts = [];
     if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
     if (costInfo.context_pct != null) parts.push('CTX ' + costInfo.context_pct + '%');
     if (parts.length === 0) {
-      costBadge.style.display = 'none';
+      if (bottomInfo) bottomInfo.style.display = 'none';
       return;
     }
     costBadge.textContent = parts.join(' \u00b7 ');
-    costBadge.style.display = '';
+    if (bottomInfo) bottomInfo.style.display = '';
   }
 
   function updateWaitingInput(waiting) {
