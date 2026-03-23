@@ -70,18 +70,17 @@ TOOL_CALL_RE = re.compile(
 http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
-TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
 DB_PATH = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "claude-chat.db")
 db: aiosqlite.Connection | None = None
-_title_lock = asyncio.Lock()
 
 
-def _save_titles():
-    """Persist title_cache to disk atomically."""
-    tmp = TITLES_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(title_cache, f)
-    os.replace(tmp, TITLES_FILE)
+async def _save_title(session_name: str, title: str):
+    title_cache[session_name] = title
+    await db.execute(
+        "INSERT OR REPLACE INTO titles (session_name, title) VALUES (?, ?)",
+        (session_name, title)
+    )
+    await db.commit()
 
 
 async def init_db():
@@ -519,8 +518,7 @@ async def _refresh_title(session_name: str, messages: list[dict]) -> None:
     if session_name in title_cache:
         return
     title = await generate_title(session_name, messages)
-    title_cache[session_name] = title
-    _save_titles()
+    await _save_title(session_name, title)
 
 
 COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
@@ -968,12 +966,7 @@ async def set_session_title(name: str, body: dict):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title must not be empty")
-    title_cache[name] = title[:60]
-    async with _title_lock:
-        try:
-            _save_titles()
-        except Exception:
-            pass
+    await _save_title(name, title[:60])
     return {"title": title_cache[name]}
 
 
