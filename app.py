@@ -1250,29 +1250,85 @@ async def get_history():
         return [dict(row) for row in await cursor.fetchall()]
 
 
+CHROMA_URL = "http://host.docker.internal:8200"
+CHROMA_COLLECTION_ID = "2b629115-e79e-4de9-a9ff-3e5a7e92e12c"
+
+
 @app.get("/api/search")
 async def search_messages(q: str = "", limit: int = 20):
     if not q or len(q) < 2:
         return {"results": []}
-    async with db.execute("""
-        SELECT m.session_name, m.role, m.content, m.ts,
-               t.title as session_title
-        FROM messages m
-        LEFT JOIN titles t ON t.session_name = m.session_name
-        WHERE m.content LIKE ?
-        ORDER BY m.ts DESC
-        LIMIT ?
-    """, (f"%{q}%", limit)) as cursor:
-        results = []
-        for row in await cursor.fetchall():
-            results.append({
-                "session": row["session_name"],
-                "session_title": row["session_title"] or row["session_name"],
-                "role": row["role"],
-                "snippet": row["content"][:150],
-                "ts": row["ts"],
-            })
-        return {"results": results}
+
+    results = []
+
+    # Primary: search ChromaDB session logs (7k+ chunks of historical sessions)
+    try:
+        chroma_resp = await http_client.post(
+            f"{CHROMA_URL}/api/v2/tenants/default_tenant/databases/default_database"
+            f"/collections/{CHROMA_COLLECTION_ID}/get",
+            json={
+                "where_document": {"$contains": q},
+                "limit": limit,
+                "include": ["documents", "metadatas"],
+            },
+            timeout=5.0,
+        )
+        if chroma_resp.status_code == 200:
+            data = chroma_resp.json()
+            seen = set()
+            for i, doc_id in enumerate(data.get("ids", [])):
+                meta = data["metadatas"][i] if data.get("metadatas") else {}
+                doc = data["documents"][i] if data.get("documents") else ""
+                session_id = meta.get("session_id", "")[:12]
+                # Deduplicate by session (multiple chunks per session)
+                if session_id in seen:
+                    continue
+                seen.add(session_id)
+                # Extract a relevant snippet around the query
+                doc_lower = doc.lower()
+                q_lower = q.lower()
+                idx = doc_lower.find(q_lower)
+                if idx >= 0:
+                    start = max(0, idx - 40)
+                    snippet = doc[start:start + 150]
+                else:
+                    snippet = doc[:150]
+                results.append({
+                    "session": meta.get("session_id", ""),
+                    "session_title": meta.get("first_prompt", "")[:60],
+                    "role": "session",
+                    "snippet": snippet,
+                    "ts": 0,
+                    "project": meta.get("project_path", ""),
+                    "source": "history",
+                })
+    except Exception:
+        pass
+
+    # Secondary: search current session messages in SQLite
+    try:
+        async with db.execute("""
+            SELECT m.session_name, m.role, m.content, m.ts,
+                   t.title as session_title
+            FROM messages m
+            LEFT JOIN titles t ON t.session_name = m.session_name
+            WHERE m.content LIKE ?
+            ORDER BY m.ts DESC
+            LIMIT ?
+        """, (f"%{q}%", limit)) as cursor:
+            for row in await cursor.fetchall():
+                results.append({
+                    "session": row["session_name"],
+                    "session_title": row["session_title"] or row["session_name"],
+                    "role": row["role"],
+                    "snippet": row["content"][:150],
+                    "ts": row["ts"],
+                    "source": "active",
+                })
+    except Exception:
+        pass
+
+    return {"results": results[:limit]}
 
 
 # ---------------------------------------------------------------------------
