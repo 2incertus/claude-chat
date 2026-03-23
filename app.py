@@ -9,8 +9,9 @@ import asyncio
 import time
 import httpx
 import yaml
+import aiosqlite
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -69,35 +70,138 @@ TOOL_CALL_RE = re.compile(
 http_client: httpx.AsyncClient | None = None
 title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
-TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
-_title_lock = asyncio.Lock()
+DB_PATH = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "claude-chat.db")
+db: aiosqlite.Connection | None = None
 
 
-def _save_titles():
-    """Persist title_cache to disk atomically."""
-    tmp = TITLES_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(title_cache, f)
-    os.replace(tmp, TITLES_FILE)
+async def _save_title(session_name: str, title: str):
+    title_cache[session_name] = title
+    await db.execute(
+        "INSERT OR REPLACE INTO titles (session_name, title) VALUES (?, ?)",
+        (session_name, title)
+    )
+    await db.commit()
+
+
+async def _index_messages(session_name: str, messages: list[dict], chash: str):
+    """Index messages for search. Idempotent via content_hash."""
+    async with db.execute(
+        "SELECT 1 FROM messages WHERE session_name = ? AND content_hash = ? LIMIT 1",
+        (session_name, chash)
+    ) as cursor:
+        if await cursor.fetchone():
+            return
+    await db.execute("DELETE FROM messages WHERE session_name = ?", (session_name,))
+    for m in messages:
+        await db.execute(
+            "INSERT INTO messages (session_name, role, content, tool, tool_results, ts, content_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session_name, m["role"], m["content"], m.get("tool", ""),
+             json.dumps(m.get("tool_results", [])), m.get("ts", 0), chash)
+        )
+    await db.commit()
+
+
+async def init_db():
+    global db
+    db = await aiosqlite.connect(DB_PATH)
+    db.row_factory = aiosqlite.Row
+    await db.executescript("""
+        CREATE TABLE IF NOT EXISTS titles (
+            session_name TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            title TEXT,
+            preview TEXT,
+            dismissed_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_name TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tool TEXT,
+            tool_results TEXT,
+            ts INTEGER,
+            content_hash TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_name);
+        CREATE INDEX IF NOT EXISTS idx_messages_content ON messages(content);
+        CREATE INDEX IF NOT EXISTS idx_history_dismissed ON history(dismissed_at);
+    """)
+    await db.commit()
+
+
+async def _migrate_json_to_sqlite():
+    """One-time migration from JSON files to SQLite."""
+    titles_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.json")
+    if os.path.exists(titles_file):
+        try:
+            with open(titles_file) as f:
+                raw = json.load(f)
+            for name, val in raw.items():
+                title = val.get("title", val) if isinstance(val, dict) else val
+                await db.execute(
+                    "INSERT OR IGNORE INTO titles (session_name, title) VALUES (?, ?)",
+                    (name, title)
+                )
+            await db.commit()
+            os.rename(titles_file, titles_file + ".migrated")
+        except Exception:
+            pass
+
+    history_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "history.json")
+    if os.path.exists(history_file):
+        try:
+            with open(history_file) as f:
+                entries = json.load(f)
+            for e in entries:
+                await db.execute(
+                    "INSERT INTO history (session_name, title, preview, dismissed_at) VALUES (?, ?, ?, ?)",
+                    (e.get("name", ""), e.get("title", ""), e.get("preview", ""), e.get("dismissed_at", 0))
+                )
+            await db.commit()
+            os.rename(history_file, history_file + ".migrated")
+        except Exception:
+            pass
+
+    settings_file = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "settings.json")
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file) as f:
+                data = json.load(f)
+            for key, val in data.items():
+                await db.execute(
+                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                    (key, json.dumps(val))
+                )
+            await db.commit()
+            os.rename(settings_file, settings_file + ".migrated")
+        except Exception:
+            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
     http_client = httpx.AsyncClient(timeout=10.0)
-    # Load persisted titles and tags
-    if os.path.exists(TITLES_FILE):
-        try:
-            with open(TITLES_FILE) as f:
-                raw = json.load(f)
-            for name, val in raw.items():
-                if isinstance(val, dict):
-                    title_cache[name] = val.get("title", name)
-                else:
-                    title_cache[name] = val
-        except Exception:
-            pass
+    await init_db()
+    await _migrate_json_to_sqlite()
+    # Load titles into in-memory cache from SQLite
+    async with db.execute("SELECT session_name, title FROM titles") as cursor:
+        async for row in cursor:
+            title_cache[row["session_name"]] = row["title"]
     yield
+    if db:
+        await db.close()
     await http_client.aclose()
 
 
@@ -112,36 +216,70 @@ class NoCacheStaticMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Require Bearer token on /api/ routes (except /api/auth and /health)."""
+class AuthMiddleware:
+    """Raw ASGI middleware — require Bearer token on /api/ routes.
+    Uses raw ASGI instead of BaseHTTPMiddleware to support WebSocket."""
 
-    async def dispatch(self, request: Request, call_next):
-        if not AUTH_ENABLED:
-            return await call_next(request)
+    def __init__(self, app):
+        self.app = app
 
-        path = request.url.path
-        # Allow through: static files, index, health, manifest, auth endpoints
+    async def __call__(self, scope, receive, send):
+        if not AUTH_ENABLED or scope["type"] == "websocket":
+            await self.app(scope, receive, send)
+            return
+
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope["path"]
         if not path.startswith("/api/"):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
         if path in ("/api/auth", "/api/auth/check") or path == "/health":
-            return await call_next(request)
-        # uploads no longer exempt -- require auth like all /api/ routes
+            await self.app(scope, receive, send)
+            return
 
-        # Check Bearer token
-        auth_header = request.headers.get("authorization", "")
+        # Check Bearer token from headers
+        headers = dict(scope.get("headers", []))
+        auth_header = (headers.get(b"authorization", b"")).decode()
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
             if token in valid_tokens and (time.time() - valid_tokens[token]) < TOKEN_TTL:
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
             elif token in valid_tokens:
-                del valid_tokens[token]  # expired
+                del valid_tokens[token]
 
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        await response(scope, receive, send)
 
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(NoCacheStaticMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ---------------------------------------------------------------------------
+# WebSocket connection manager
+# ---------------------------------------------------------------------------
+
+class ConnectionManager:
+    def __init__(self):
+        self.connections: dict[str, list[WebSocket]] = {}
+
+    async def connect(self, session_name: str, ws: WebSocket):
+        await ws.accept()
+        if session_name not in self.connections:
+            self.connections[session_name] = []
+        self.connections[session_name].append(ws)
+
+    def disconnect(self, session_name: str, ws: WebSocket):
+        if session_name in self.connections:
+            self.connections[session_name] = [c for c in self.connections[session_name] if c is not ws]
+            if not self.connections[session_name]:
+                del self.connections[session_name]
+
+ws_manager = ConnectionManager()
 
 # ---------------------------------------------------------------------------
 # tmux helpers
@@ -432,12 +570,12 @@ async def _refresh_title(session_name: str, messages: list[dict]) -> None:
     if session_name in title_cache:
         return
     title = await generate_title(session_name, messages)
-    title_cache[session_name] = title
-    _save_titles()
+    await _save_title(session_name, title)
 
 
 COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
 CTX_RE = re.compile(r"CTX\s+(\d+)%")
+USAGE_RE = re.compile(r"5h\s+(\d+)%.*?7d\s+(\d+)%")
 
 
 def extract_cost_info(raw: str) -> dict | None:
@@ -446,6 +584,8 @@ def extract_cost_info(raw: str) -> dict | None:
     tail = lines[-50:] if len(lines) > 50 else lines
     cost = None
     ctx_pct = None
+    usage_5h = None
+    usage_7d = None
     for line in reversed(tail):
         if cost is None:
             m = COST_RE.search(line)
@@ -455,8 +595,13 @@ def extract_cost_info(raw: str) -> dict | None:
             m = CTX_RE.search(line)
             if m:
                 ctx_pct = int(m.group(1))
-    if cost is not None or ctx_pct is not None:
-        return {"cost": cost, "context_pct": ctx_pct}
+        if usage_5h is None:
+            m = USAGE_RE.search(line)
+            if m:
+                usage_5h = int(m.group(1))
+                usage_7d = int(m.group(2))
+    if cost is not None or ctx_pct is not None or usage_5h is not None:
+        return {"cost": cost, "context_pct": ctx_pct, "usage_5h": usage_5h, "usage_7d": usage_7d}
     return None
 
 
@@ -682,6 +827,8 @@ async def get_session(name: str, lines: int = 10000):
     status = get_session_status(raw)
     cost_info = extract_cost_info(raw)
 
+    asyncio.create_task(_index_messages(name, messages, chash))
+
     return {
         "name": name,
         "title": title,
@@ -844,6 +991,36 @@ async def respawn_session(name: str):
     return {"respawned": True}
 
 
+@app.get("/api/sessions/{name}/health")
+async def session_health(name: str):
+    """Check if a session is healthy and Claude is ready for input."""
+    validate_session_name(name)
+    if not _session_exists(name):
+        return {"exists": False, "ready": False, "status": "not_found"}
+
+    is_claude = _is_claude_session(name)
+    if not is_claude:
+        return {"exists": True, "ready": False, "status": "dead", "message": "Claude is not running"}
+
+    try:
+        raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-20")
+    except RuntimeError:
+        return {"exists": True, "ready": False, "status": "error", "message": "Cannot read pane"}
+
+    status = get_session_status(raw)
+
+    if "trust this folder" in raw.lower() or "Enter to confirm" in raw:
+        return {"exists": True, "ready": False, "status": "trust_prompt", "message": "Accepting workspace trust..."}
+
+    ready = status in ("idle", "waiting_input")
+    return {
+        "exists": True,
+        "ready": ready,
+        "status": status,
+        "message": "Claude is ready" if ready else "Claude is starting...",
+    }
+
+
 @app.delete("/api/sessions/{name}")
 async def dismiss_session(name: str):
     """Kill the tmux session entirely.
@@ -868,7 +1045,7 @@ async def dismiss_session(name: str):
             preview = asst[-1]["content"][:200]
     except RuntimeError:
         pass
-    _add_to_history(name, session_title, preview)
+    await _add_to_history(name, session_title, preview)
 
     run_tmux("kill-session", "-t", name)
     return {"dismissed": True}
@@ -881,12 +1058,7 @@ async def set_session_title(name: str, body: dict):
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="Title must not be empty")
-    title_cache[name] = title[:60]
-    async with _title_lock:
-        try:
-            _save_titles()
-        except Exception:
-            pass
+    await _save_title(name, title[:60])
     return {"title": title_cache[name]}
 
 
@@ -913,6 +1085,7 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
         }
 
     messages = parse_messages(raw)
+    asyncio.create_task(_index_messages(name, messages, chash))
     return {
         "has_changes": True,
         "content_hash": chash,
@@ -921,6 +1094,65 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
         "waiting_input": status == "waiting_input",
         "cost_info": cost_info,
     }
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint
+# ---------------------------------------------------------------------------
+
+@app.websocket("/api/sessions/{name}/ws")
+async def session_websocket(ws: WebSocket, name: str):
+    token = ws.query_params.get("token", "")
+    if AUTH_ENABLED and token not in valid_tokens:
+        await ws.close(code=4001, reason="Unauthorized")
+        return
+
+    validate_session_name(name)
+    await ws_manager.connect(name, ws)
+
+    try:
+        last_hash = ""
+        while True:
+            try:
+                raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-10000")
+            except RuntimeError:
+                await ws.send_json({"type": "session_dead"})
+                break
+
+            chash = content_hash(raw)
+            status = get_session_status(raw)
+            cost_info = extract_cost_info(raw)
+
+            if chash != last_hash:
+                messages = parse_messages(raw)
+                await ws.send_json({
+                    "type": "update",
+                    "has_changes": True,
+                    "content_hash": chash,
+                    "status": status,
+                    "messages": messages,
+                    "waiting_input": status == "waiting_input",
+                    "cost_info": cost_info,
+                })
+                last_hash = chash
+            else:
+                await ws.send_json({
+                    "type": "status",
+                    "has_changes": False,
+                    "content_hash": chash,
+                    "status": status,
+                    "waiting_input": status == "waiting_input",
+                    "cost_info": cost_info,
+                })
+
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=1.5)
+            except asyncio.TimeoutError:
+                pass
+            except WebSocketDisconnect:
+                break
+    finally:
+        ws_manager.disconnect(name, ws)
 
 
 # ---------------------------------------------------------------------------
@@ -997,85 +1229,142 @@ async def serve_upload(filename: str):
 # Session history
 # ---------------------------------------------------------------------------
 
-HISTORY_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "history.json")
-HISTORY_MAX = 50
-
-
-def _load_history() -> list[dict]:
-    try:
-        with open(HISTORY_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return []
-
-
-def _save_history(entries: list[dict]) -> None:
-    os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
-    tmp = HISTORY_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(entries[-HISTORY_MAX:], f)
-    os.replace(tmp, HISTORY_FILE)
-
-
-def _add_to_history(name: str, title: str, preview: str) -> None:
-    entries = _load_history()
-    entries.append({
-        "name": name,
-        "title": title,
-        "preview": preview[:200] if preview else "",
-        "dismissed_at": int(time.time() * 1000),
-    })
-    _save_history(entries[-HISTORY_MAX:])
+async def _add_to_history(name: str, title: str, preview: str):
+    await db.execute(
+        "INSERT INTO history (session_name, title, preview, dismissed_at) VALUES (?, ?, ?, ?)",
+        (name, title, preview[:200], int(time.time() * 1000))
+    )
+    await db.execute("""
+        DELETE FROM history WHERE id NOT IN (
+            SELECT id FROM history ORDER BY dismissed_at DESC LIMIT 50
+        )
+    """)
+    await db.commit()
 
 
 @app.get("/api/history")
 async def get_history():
-    """Return the last 20 dismissed sessions."""
-    entries = _load_history()
-    # Return most recent first, limited to 20
-    return entries[-20:][::-1]
+    async with db.execute(
+        "SELECT session_name as name, title, preview, dismissed_at FROM history ORDER BY dismissed_at DESC LIMIT 20"
+    ) as cursor:
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+CHROMA_URL = "http://host.docker.internal:8200"
+CHROMA_COLLECTION_ID = "2b629115-e79e-4de9-a9ff-3e5a7e92e12c"
+
+
+@app.get("/api/search")
+async def search_messages(q: str = "", limit: int = 20):
+    if not q or len(q) < 2:
+        return {"results": []}
+
+    results = []
+
+    # Primary: search ChromaDB session logs (7k+ chunks of historical sessions)
+    try:
+        chroma_resp = await http_client.post(
+            f"{CHROMA_URL}/api/v2/tenants/default_tenant/databases/default_database"
+            f"/collections/{CHROMA_COLLECTION_ID}/get",
+            json={
+                "where_document": {"$contains": q},
+                "limit": limit,
+                "include": ["documents", "metadatas"],
+            },
+            timeout=5.0,
+        )
+        if chroma_resp.status_code == 200:
+            data = chroma_resp.json()
+            seen = set()
+            for i, doc_id in enumerate(data.get("ids", [])):
+                meta = data["metadatas"][i] if data.get("metadatas") else {}
+                doc = data["documents"][i] if data.get("documents") else ""
+                session_id = meta.get("session_id", "")[:12]
+                # Deduplicate by session (multiple chunks per session)
+                if session_id in seen:
+                    continue
+                seen.add(session_id)
+                # Extract a relevant snippet around the query
+                doc_lower = doc.lower()
+                q_lower = q.lower()
+                idx = doc_lower.find(q_lower)
+                if idx >= 0:
+                    start = max(0, idx - 40)
+                    snippet = doc[start:start + 150]
+                else:
+                    snippet = doc[:150]
+                results.append({
+                    "session": meta.get("session_id", ""),
+                    "session_title": meta.get("first_prompt", "")[:60],
+                    "role": "session",
+                    "snippet": snippet,
+                    "ts": 0,
+                    "project": meta.get("project_path", ""),
+                    "source": "history",
+                })
+    except Exception:
+        pass
+
+    # Secondary: search current session messages in SQLite
+    try:
+        async with db.execute("""
+            SELECT m.session_name, m.role, m.content, m.ts,
+                   t.title as session_title
+            FROM messages m
+            LEFT JOIN titles t ON t.session_name = m.session_name
+            WHERE m.content LIKE ?
+            ORDER BY m.ts DESC
+            LIMIT ?
+        """, (f"%{q}%", limit)) as cursor:
+            for row in await cursor.fetchall():
+                results.append({
+                    "session": row["session_name"],
+                    "session_title": row["session_title"] or row["session_name"],
+                    "role": row["role"],
+                    "snippet": row["content"][:150],
+                    "ts": row["ts"],
+                    "source": "active",
+                })
+    except Exception:
+        pass
+
+    return {"results": results[:limit]}
 
 
 # ---------------------------------------------------------------------------
 # Server-side settings (synced across devices)
 # ---------------------------------------------------------------------------
-SETTINGS_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "settings.json")
-
 SYNCED_KEYS = {
     "pinned_sessions", "session_folders", "hidden_sessions",
     "ntfy_sessions", "claude_chat_settings", "chatVoice",
 }
 
 
-def _load_settings() -> dict:
-    try:
-        with open(SETTINGS_FILE) as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_settings(data: dict) -> None:
-    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    tmp = SETTINGS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(data, f)
-    os.replace(tmp, SETTINGS_FILE)
+async def _load_settings() -> dict:
+    result = {}
+    async with db.execute("SELECT key, value FROM settings") as cursor:
+        async for row in cursor:
+            try:
+                result[row["key"]] = json.loads(row["value"])
+            except Exception:
+                result[row["key"]] = row["value"]
+    return result
 
 
 @app.get("/api/settings")
 async def get_settings():
-    return _load_settings()
+    return await _load_settings()
 
 
 @app.put("/api/settings")
 async def put_settings(body: dict):
-    # Merge: only accept known keys, plus starred_* keys
-    current = _load_settings()
     for key, val in body.items():
         if key in SYNCED_KEYS or key.startswith("starred_"):
-            current[key] = val
-    _save_settings(current)
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, json.dumps(val))
+            )
+    await db.commit()
     return {"ok": True}
 
 
@@ -1213,13 +1502,20 @@ async def create_session(body: dict):
              "/home/ubuntu/.local/bin/claude")
 
     # Auto-accept the "trust this folder" prompt after Claude starts
-    async def _accept_trust():
-        await asyncio.sleep(3)
-        try:
-            run_tmux("send-keys", "-t", name, "Enter")
-        except RuntimeError:
-            pass  # session may have died
+    async def _wait_and_accept_trust():
+        """Wait for Claude to show trust prompt, then accept it."""
+        for _ in range(10):
+            await asyncio.sleep(1)
+            try:
+                raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-20")
+                if "trust this folder" in raw.lower() or "Enter to confirm" in raw:
+                    run_tmux("send-keys", "-t", name, "Enter")
+                    return
+                if "\u276f" in raw or "❯" in raw:
+                    return  # Already trusted, Claude is ready
+            except RuntimeError:
+                return
 
-    asyncio.create_task(_accept_trust())
+    asyncio.create_task(_wait_and_accept_trust())
 
     return {"created": True, "name": name, "path": path}

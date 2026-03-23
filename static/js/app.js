@@ -384,6 +384,7 @@
     currentSessionStatus = '';
     hasUnreadMessages = false;
     stopPolling();
+    disconnectWebSocket();
     stopTTS();
     hidePreview();
     updateCostBadge(null);
@@ -406,6 +407,7 @@
     contentHash = '';
     idleCount = 0;
     lastMessageCount = 0;
+    pendingMessages = [];
     starFilterActive = false;
     chatFeed.classList.remove('starred-only');
     stopSessionListPolling();
@@ -444,6 +446,7 @@
 
     loadSession(name);
     startPolling();
+    connectWebSocket(name);
     updatePillPosition();
   }
 
@@ -1130,23 +1133,22 @@
 
   function updateCostBadge(costInfo) {
     if (!costBadge) return;
-    if (!costInfo) {
+    if (!currentSession) {
       costBadge.style.display = 'none';
       return;
     }
     var parts = [];
-    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
-    if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% remaining');
-    if (parts.length === 0) {
-      costBadge.style.display = 'none';
-      return;
+    if (costInfo) {
+      if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% ctx');
+      if (costInfo.usage_5h != null) parts.push('5h ' + costInfo.usage_5h + '%');
+      if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
     }
-    costBadge.textContent = parts.join(' \u00b7 ');
+    costBadge.textContent = parts.length > 0 ? parts.join(' \u00b7 ') : '\u2014';
     costBadge.style.display = '';
-    // Color-code by context REMAINING: high = green (plenty left), low = red (running out)
-    var pct = costInfo.context_pct;
+    // Color-code by context REMAINING: high = good, low = warning
+    var pct = costInfo && costInfo.context_pct;
     if (pct != null) {
-      var color = pct >= 70 ? '#4ade80' : pct >= 40 ? '#facc15' : pct >= 20 ? '#f97316' : '#ef4444';
+      var color = pct >= 70 ? '#16a34a' : pct >= 40 ? '#ca8a04' : pct >= 20 ? '#ea580c' : '#dc2626';
       costBadge.style.color = color;
       costBadge.style.borderColor = color;
     } else {
@@ -2181,6 +2183,81 @@
     chatFeed.appendChild(el);
   }
 
+  // ========== WebSocket ==========
+  var wsConnection = null;
+  var wsReconnectTimer = null;
+  var wsReconnectAttempts = 0;
+
+  function connectWebSocket(sessionName) {
+    disconnectWebSocket();
+    var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = protocol + '//' + location.host + '/api/sessions/' +
+      encodeURIComponent(sessionName) + '/ws?token=' + encodeURIComponent(authToken);
+
+    try {
+      wsConnection = new WebSocket(url);
+    } catch(e) {
+      startPolling();
+      return;
+    }
+
+    wsConnection.onopen = function() {
+      wsReconnectAttempts = 0;
+      stopPolling();
+    };
+
+    wsConnection.onmessage = function(event) {
+      var data;
+      try { data = JSON.parse(event.data); } catch(e) { return; }
+
+      if (data.type === 'session_dead') {
+        showActionToast('Session ended', 'info');
+        return;
+      }
+
+      if (data.has_changes && data.messages) {
+        renderMessages(data.messages);
+        lastMessageCount = data.messages.length;
+      }
+      if (data.status) {
+        updateStatusDot(data.status);
+      }
+      if (data.cost_info !== undefined) {
+        updateCostBadge(data.cost_info);
+      }
+      if (data.waiting_input !== undefined) {
+        updateWaitingInput(data.waiting_input);
+      }
+      if (data.content_hash) {
+        contentHash = data.content_hash;
+      }
+      idleCount = data.has_changes ? 0 : idleCount + 1;
+    };
+
+    wsConnection.onclose = function() {
+      wsConnection = null;
+      if (wsReconnectAttempts < 5) {
+        wsReconnectAttempts++;
+        var delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 10000);
+        wsReconnectTimer = setTimeout(function() {
+          if (currentSession === sessionName) connectWebSocket(sessionName);
+        }, delay);
+      } else {
+        startPolling();
+      }
+    };
+
+    wsConnection.onerror = function() {};
+  }
+
+  function disconnectWebSocket() {
+    clearTimeout(wsReconnectTimer);
+    if (wsConnection) {
+      try { wsConnection.close(); } catch(e) {}
+      wsConnection = null;
+    }
+  }
+
   // ========== Polling ==========
   function startPolling() {
     stopPolling();
@@ -2281,11 +2358,13 @@
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) {
       stopPolling();
+      disconnectWebSocket();
       stopSessionListPolling();
     } else {
       if (currentSession) {
         idleCount = 0;
         startPolling();
+        connectWebSocket(currentSession);
       } else {
         loadSessions();
         startSessionListPolling();
@@ -3319,26 +3398,27 @@
       // Disable input until ready
       textInput.disabled = true;
       textInput.placeholder = 'Waiting for Claude to start...';
-      // Poll until Claude is ready (❯ prompt visible = idle status)
+      // Poll health endpoint until Claude is ready
       var attempts = 0;
       var readyCheck = setInterval(function() {
         attempts++;
-        authFetch('/api/sessions/' + encodeURIComponent(data.name))
+        authFetch('/api/sessions/' + encodeURIComponent(data.name) + '/health')
           .then(function(r) { return r.ok ? r.json() : null; })
-          .then(function(sess) {
-            if (!sess) return;
-            var ready = sess.status === 'idle' || sess.status === 'waiting_input' || sess.messages.length > 0;
-            if (ready || attempts > 15) {
+          .then(function(health) {
+            if (!health) return;
+            // Update the spinner message
+            var msgEl = chatFeed.querySelector('.session-starting div:last-child');
+            if (msgEl && health.message) msgEl.textContent = health.message;
+
+            if (health.ready || attempts > 15) {
               clearInterval(readyCheck);
               textInput.disabled = false;
               textInput.placeholder = 'Message...';
               textInput.focus();
-              // Replace starting indicator with actual session content
               loadSession(data.name);
-              if (ready) {
+              connectWebSocket(data.name);
+              if (health.ready) {
                 showActionToast('Claude is ready', 'success');
-              } else {
-                showActionToast('Session started (Claude may still be loading)', 'info');
               }
             }
           })
@@ -3347,10 +3427,10 @@
               clearInterval(readyCheck);
               textInput.disabled = false;
               textInput.placeholder = 'Message...';
-              showActionToast('Session created but Claude may not be ready', 'info');
+              loadSession(data.name);
             }
           });
-      }, 2000);
+      }, 1500);
     })
     .catch(function(err) {
       showActionToast(err.message || 'Failed to create session', 'error');
@@ -3681,6 +3761,94 @@
     closeShortcuts();
     if (starFilterBtn) starFilterBtn.click();
   });
+  var actionSearch = document.getElementById('actionSearch');
+  if (actionSearch) actionSearch.addEventListener('click', function() {
+    closeShortcuts();
+    openGlobalSearch();
+  });
+
+  // ========== Global Search Modal ==========
+  var searchBackdrop = document.getElementById('searchBackdrop');
+  var searchPanel = document.getElementById('searchPanel');
+  var globalSearchInput = document.getElementById('globalSearchInput');
+  var searchResults = document.getElementById('searchResults');
+
+  function openGlobalSearch() {
+    searchBackdrop.classList.add('visible');
+    searchPanel.classList.add('visible');
+    globalSearchInput.value = '';
+    searchResults.innerHTML = '';
+    setTimeout(function() { globalSearchInput.focus(); }, 100);
+  }
+
+  function closeGlobalSearch() {
+    searchBackdrop.classList.remove('visible');
+    searchPanel.classList.remove('visible');
+  }
+
+  searchBackdrop.addEventListener('click', closeGlobalSearch);
+
+  var globalSearchTimer = null;
+  globalSearchInput.addEventListener('input', function() {
+    clearTimeout(globalSearchTimer);
+    var q = globalSearchInput.value.trim();
+    if (q.length < 2) { searchResults.innerHTML = ''; return; }
+    globalSearchTimer = setTimeout(function() {
+      authFetch('/api/search?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          searchResults.innerHTML = '';
+          if (!data.results || data.results.length === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'search-empty';
+            empty.textContent = 'No results found';
+            searchResults.appendChild(empty);
+            return;
+          }
+          data.results.forEach(function(r) {
+            var el = document.createElement('div');
+            el.className = 'search-result';
+            var header = document.createElement('div');
+            header.className = 'search-result-header';
+            var session = document.createElement('span');
+            session.className = 'search-result-session';
+            session.textContent = r.session_title;
+            var role = document.createElement('span');
+            role.className = 'search-result-role';
+            role.textContent = r.role;
+            header.appendChild(session);
+            header.appendChild(role);
+            var snippet = document.createElement('div');
+            snippet.className = 'search-result-snippet';
+            snippet.textContent = r.snippet;
+            el.appendChild(header);
+            el.appendChild(snippet);
+            el.addEventListener('click', function() {
+              closeGlobalSearch();
+              showSessionView(r.session);
+            });
+            searchResults.appendChild(el);
+          });
+        });
+    }, 300);
+  });
+
+  // Long-press on search toggle opens global search
+  var searchLongPress = null;
+  searchToggleBtn.addEventListener('mousedown', function() {
+    searchLongPress = setTimeout(function() {
+      searchLongPress = 'fired';
+      openGlobalSearch();
+    }, 500);
+  });
+  searchToggleBtn.addEventListener('mouseup', function() {
+    if (searchLongPress !== 'fired') clearTimeout(searchLongPress);
+    searchLongPress = null;
+  });
+  searchToggleBtn.addEventListener('mouseleave', function() {
+    if (searchLongPress !== 'fired') clearTimeout(searchLongPress);
+    searchLongPress = null;
+  });
 
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
@@ -3690,10 +3858,27 @@
     var newSessionOpen = newSessionPanel.classList.contains('visible');
     var historyOpen = historyPanel.classList.contains('visible');
     var shortcutsOpen = shortcutsPanel.classList.contains('visible');
+    var globalSearchOpen = searchPanel.classList.contains('visible');
     var paletteOpen = cmdPalette.classList.contains('visible');
+
+    // Ctrl/Cmd+Shift+F: open global search
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'F') {
+      e.preventDefault();
+      if (globalSearchOpen) {
+        closeGlobalSearch();
+      } else {
+        openGlobalSearch();
+      }
+      return;
+    }
 
     // Escape: close settings/new-session/command-palette, or go back to session list
     if (e.key === 'Escape') {
+      if (globalSearchOpen) {
+        closeGlobalSearch();
+        e.preventDefault();
+        return;
+      }
       if (shortcutsOpen) {
         closeShortcuts();
         e.preventDefault();
