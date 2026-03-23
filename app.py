@@ -460,6 +460,30 @@ def extract_cost_info(raw: str) -> dict | None:
     return None
 
 
+COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
+CTX_RE = re.compile(r"CTX\s+(\d+)%")
+
+
+def extract_cost_info(raw: str) -> dict | None:
+    """Extract cost/context info from last lines of pane output."""
+    lines = raw.strip().splitlines()
+    tail = lines[-50:] if len(lines) > 50 else lines
+    cost = None
+    ctx_pct = None
+    for line in reversed(tail):
+        if cost is None:
+            m = COST_RE.search(line)
+            if m:
+                cost = float(m.group(1))
+        if ctx_pct is None:
+            m = CTX_RE.search(line)
+            if m:
+                ctx_pct = int(m.group(1))
+    if cost is not None or ctx_pct is not None:
+        return {"cost": cost, "context_pct": ctx_pct}
+    return None
+
+
 STATUS_BAR_RE = re.compile(
     r"(RAM\s+\d+%|CPU\s+\d+%|CTX\s+\d+%|tokens$|⏵⏵|bypass permissions|shift\+tab"
     r"|accept edits|don't ask|current:\s+\d|latest:\s+\d|\d+\s+tokens$"
@@ -638,7 +662,7 @@ async def list_sessions():
                 "state": "dead",
                 "preview": preview,
                 "cost_info": cost_info,
-                            })
+            })
             continue
 
         try:
@@ -663,7 +687,7 @@ async def list_sessions():
             "state": "active",
             "preview": preview,
             "cost_info": extract_cost_info(raw),
-                    })
+        })
 
     return result
 
