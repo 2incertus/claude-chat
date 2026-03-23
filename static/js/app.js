@@ -773,18 +773,6 @@
         card.appendChild(preview);
       }
 
-      var tags = s.tags || [];
-      if (tags.length > 0) {
-        var tagRow = document.createElement('div');
-        tagRow.className = 'session-card-tags';
-        tags.forEach(function(tag) {
-          var pill = document.createElement('span');
-          pill.className = 'tag-pill';
-          pill.textContent = tag;
-          tagRow.appendChild(pill);
-        });
-        card.appendChild(tagRow);
-      }
 
       if (s.state === 'dead') {
         var respawnBtn = document.createElement('button');

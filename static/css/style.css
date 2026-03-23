@@ -498,21 +498,6 @@ body {
   white-space: nowrap;
   line-height: 1.4;
 }
-.session-card-tags {
-  display: flex;
-  gap: 4px;
-  padding: 4px 0 0;
-  flex-wrap: wrap;
-}
-.tag-pill {
-  font-size: 0.62rem;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--surface2);
-  color: var(--text-muted);
-  border: 1px solid var(--border-subtle, var(--border-medium));
-  white-space: nowrap;
-}
 .empty-state {
   flex: 1;
   display: flex;
