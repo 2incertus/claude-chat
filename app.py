@@ -450,7 +450,9 @@ def get_session_status(raw: str) -> str:
     tail_text = "\n".join(cl.strip() for cl in tail_lines)
 
     # 1. Check for AskUserQuestion / interactive prompts (highest priority)
-    if "Enter to select" in tail_text:
+    # Must match the full Claude Code UI chrome, not just substrings in message content.
+    # AskUserQuestion shows: "Enter to select · ↑/↓ to navigate · Esc to cancel"
+    if re.search(r"Enter to select.*navigate.*cancel", tail_text, re.DOTALL):
         return "waiting_input"
     if re.search(r"\([Yy]/[Nn]\)", tail_text):
         return "waiting_input"
