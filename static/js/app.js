@@ -384,6 +384,7 @@
     currentSessionStatus = '';
     hasUnreadMessages = false;
     stopPolling();
+    disconnectWebSocket();
     stopTTS();
     hidePreview();
     updateCostBadge(null);
@@ -444,6 +445,7 @@
 
     loadSession(name);
     startPolling();
+    connectWebSocket(name);
     updatePillPosition();
   }
 
@@ -2181,6 +2183,81 @@
     chatFeed.appendChild(el);
   }
 
+  // ========== WebSocket ==========
+  var wsConnection = null;
+  var wsReconnectTimer = null;
+  var wsReconnectAttempts = 0;
+
+  function connectWebSocket(sessionName) {
+    disconnectWebSocket();
+    var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = protocol + '//' + location.host + '/api/sessions/' +
+      encodeURIComponent(sessionName) + '/ws?token=' + encodeURIComponent(authToken);
+
+    try {
+      wsConnection = new WebSocket(url);
+    } catch(e) {
+      startPolling();
+      return;
+    }
+
+    wsConnection.onopen = function() {
+      wsReconnectAttempts = 0;
+      stopPolling();
+    };
+
+    wsConnection.onmessage = function(event) {
+      var data;
+      try { data = JSON.parse(event.data); } catch(e) { return; }
+
+      if (data.type === 'session_dead') {
+        showActionToast('Session ended', 'info');
+        return;
+      }
+
+      if (data.has_changes && data.messages) {
+        renderMessages(data.messages);
+        lastMessageCount = data.messages.length;
+      }
+      if (data.status) {
+        updateStatusDot(data.status);
+      }
+      if (data.cost_info !== undefined) {
+        updateCostBadge(data.cost_info);
+      }
+      if (data.waiting_input !== undefined) {
+        updateWaitingInput(data.waiting_input);
+      }
+      if (data.content_hash) {
+        contentHash = data.content_hash;
+      }
+      idleCount = data.has_changes ? 0 : idleCount + 1;
+    };
+
+    wsConnection.onclose = function() {
+      wsConnection = null;
+      if (wsReconnectAttempts < 5) {
+        wsReconnectAttempts++;
+        var delay = Math.min(1000 * Math.pow(2, wsReconnectAttempts), 10000);
+        wsReconnectTimer = setTimeout(function() {
+          if (currentSession === sessionName) connectWebSocket(sessionName);
+        }, delay);
+      } else {
+        startPolling();
+      }
+    };
+
+    wsConnection.onerror = function() {};
+  }
+
+  function disconnectWebSocket() {
+    clearTimeout(wsReconnectTimer);
+    if (wsConnection) {
+      try { wsConnection.close(); } catch(e) {}
+      wsConnection = null;
+    }
+  }
+
   // ========== Polling ==========
   function startPolling() {
     stopPolling();
@@ -2281,11 +2358,13 @@
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) {
       stopPolling();
+      disconnectWebSocket();
       stopSessionListPolling();
     } else {
       if (currentSession) {
         idleCount = 0;
         startPolling();
+        connectWebSocket(currentSession);
       } else {
         loadSessions();
         startSessionListPolling();
