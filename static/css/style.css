@@ -815,16 +815,18 @@ body {
 .input-area {
   flex-shrink: 0;
   position: relative;
-  padding: 8px 16px 4px;
+  padding: 8px 16px 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
   z-index: 12;
+  /* Extend background through safe area */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 /* Special keys toolbar fills the safe area */
 .special-keys {
   display: flex;
   gap: 6px;
-  padding: 4px 0 max(4px, env(safe-area-inset-bottom, 4px));
+  padding: 4px 0 4px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }

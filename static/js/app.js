@@ -1963,10 +1963,20 @@
   function toggleSendMic() {
     if (textInput.value.trim()) {
       sendBtn.style.display = 'flex';
-      micBtn.style.display = 'none';
+      micBtn.style.display = 'flex';
+      micBtn.style.width = '28px';
+      micBtn.style.minWidth = '28px';
+      micBtn.style.height = '28px';
+      micBtn.style.minHeight = '28px';
+      micBtn.style.opacity = '0.6';
     } else {
       sendBtn.style.display = 'none';
       micBtn.style.display = 'flex';
+      micBtn.style.width = '';
+      micBtn.style.minWidth = '';
+      micBtn.style.height = '';
+      micBtn.style.minHeight = '';
+      micBtn.style.opacity = '';
     }
   }
   textInput.addEventListener('input', function() {
@@ -2281,8 +2291,16 @@
     recognition.onend = function() {
       isRecording = false;
       var text = finalTranscript.trim();
-      if (text) { textInput.value = text; textInput.focus(); toggleSendMic(); }
-      else { micLabel.textContent = 'No speech detected'; setTimeout(function() { micLabel.textContent = ''; }, 1500); }
+      if (text) {
+        // Append to existing text instead of replacing
+        var existing = textInput.value.trim();
+        textInput.value = existing ? existing + ' ' + text : text;
+        textInput.focus();
+        toggleSendMic();
+      } else {
+        micLabel.textContent = 'No speech detected';
+        setTimeout(function() { micLabel.textContent = ''; }, 1500);
+      }
       setMicState('idle');
     };
 
@@ -2324,7 +2342,7 @@
           .then(function(r) { return r.json(); })
           .then(function(data) {
             var text = (data.text || '').trim();
-            if (text) { textInput.value = text; textInput.focus(); toggleSendMic(); }
+            if (text) { var ex = textInput.value.trim(); textInput.value = ex ? ex + ' ' + text : text; textInput.focus(); toggleSendMic(); }
             else { micLabel.textContent = 'No speech detected'; setTimeout(function() { micLabel.textContent = ''; }, 1500); }
           })
           .catch(function(err) {
