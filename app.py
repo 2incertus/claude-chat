@@ -1117,12 +1117,22 @@ def _load_config() -> dict:
         with open(CONFIG_FILE) as f:
             return json.load(f)
     except Exception:
-        return {"presets": []}
+        return {}
+
+DEFAULT_PRESETS = [
+    {"name": "Home", "path": "/home/ubuntu"},
+    {"name": "Claude Chat", "path": "/home/ubuntu/docker/claude-chat"},
+    {"name": "Docker", "path": "/home/ubuntu/docker"},
+]
+
+
+def _get_presets() -> list[dict]:
+    config = _load_config()
+    return config.get("presets", None) or DEFAULT_PRESETS
 
 
 def _is_allowed_path(path: str) -> bool:
-    config = _load_config()
-    allowed_paths = {p["path"] for p in config.get("presets", [])}
+    allowed_paths = {p["path"] for p in _get_presets()}
     if path in allowed_paths:
         return True
     return path == "/home/ubuntu" or path.startswith("/home/ubuntu/")
@@ -1130,7 +1140,7 @@ def _is_allowed_path(path: str) -> bool:
 
 @app.get("/api/config")
 async def get_config():
-    return _load_config()
+    return {"presets": _get_presets()}
 
 
 @app.post("/api/sessions")
