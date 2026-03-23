@@ -3308,8 +3308,49 @@
       return r.json();
     })
     .then(function(data) {
-      showActionToast('Session ' + data.name + ' created', 'success');
-      loadSessions();
+      // Open the session immediately
+      showSessionView(data.name);
+      // Show "starting" indicator in chat feed
+      while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
+      var startingEl = document.createElement('div');
+      startingEl.className = 'session-starting';
+      startingEl.innerHTML = '<div class="starting-spinner"></div><div>Starting Claude Code...</div>';
+      chatFeed.appendChild(startingEl);
+      // Disable input until ready
+      textInput.disabled = true;
+      textInput.placeholder = 'Waiting for Claude to start...';
+      // Poll until Claude is ready (❯ prompt visible = idle status)
+      var attempts = 0;
+      var readyCheck = setInterval(function() {
+        attempts++;
+        authFetch('/api/sessions/' + encodeURIComponent(data.name))
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(sess) {
+            if (!sess) return;
+            var ready = sess.status === 'idle' || sess.status === 'waiting_input' || sess.messages.length > 0;
+            if (ready || attempts > 15) {
+              clearInterval(readyCheck);
+              textInput.disabled = false;
+              textInput.placeholder = 'Message...';
+              textInput.focus();
+              // Replace starting indicator with actual session content
+              loadSession(data.name);
+              if (ready) {
+                showActionToast('Claude is ready', 'success');
+              } else {
+                showActionToast('Session started (Claude may still be loading)', 'info');
+              }
+            }
+          })
+          .catch(function() {
+            if (attempts > 15) {
+              clearInterval(readyCheck);
+              textInput.disabled = false;
+              textInput.placeholder = 'Message...';
+              showActionToast('Session created but Claude may not be ready', 'info');
+            }
+          });
+      }, 2000);
     })
     .catch(function(err) {
       showActionToast(err.message || 'Failed to create session', 'error');
