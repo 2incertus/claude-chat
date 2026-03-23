@@ -1103,9 +1103,25 @@
         el.appendChild(actions);
 
         // Detect numbered options for quick-reply buttons
-        // Match patterns like "1. Option text" or "1) Option text"
-        var optionLines = content.match(/^[\s]*(\d+)[.)]\s+.+/gm);
-        if (optionLines && optionLines.length >= 2 && optionLines.length <= 8) {
+        // Only show when the message ends with a question (asking user to choose)
+        var contentTrimmed = content.trim();
+        var endsWithQuestion = /\?\s*$/.test(contentTrimmed);
+        var allOptionLines = content.match(/^[\s]*(\d+)[.)]\s+.+/gm);
+        // Only use the LAST contiguous numbered sequence (starting from 1)
+        var optionLines = null;
+        if (allOptionLines && endsWithQuestion) {
+          // Walk backwards to find the last sequence starting with "1."
+          var lastGroup = [];
+          for (var oli = allOptionLines.length - 1; oli >= 0; oli--) {
+            var olMatch = allOptionLines[oli].match(/^\s*(\d+)/);
+            if (olMatch) {
+              lastGroup.unshift(allOptionLines[oli]);
+              if (olMatch[1] === '1') break;
+            }
+          }
+          if (lastGroup.length >= 2 && lastGroup.length <= 6) optionLines = lastGroup;
+        }
+        if (optionLines) {
           var quickReplies = document.createElement('div');
           quickReplies.className = 'quick-replies';
           for (var qi = 0; qi < optionLines.length; qi++) {
