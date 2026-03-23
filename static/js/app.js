@@ -514,7 +514,15 @@
     picker.appendChild(titleEl);
 
     var currentFolder = getSessionFolders()[sessionName] || '';
-    var presets = ['', 'Active', 'Monitoring', 'Archive'];
+    var defaults = ['Active', 'Monitoring', 'Archive'];
+    // Collect all unique folder names already in use
+    var allFolders = getSessionFolders();
+    var customFolders = [];
+    Object.keys(allFolders).forEach(function(k) {
+      var f = allFolders[k];
+      if (f && defaults.indexOf(f) < 0 && customFolders.indexOf(f) < 0) customFolders.push(f);
+    });
+    var presets = [''].concat(defaults).concat(customFolders.sort());
     presets.forEach(function(f) {
       var btn = document.createElement('button');
       btn.className = 'folder-picker-option' + (currentFolder === f ? ' selected' : '');
