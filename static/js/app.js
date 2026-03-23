@@ -1082,17 +1082,17 @@
     }
     var parts = [];
     if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
-    if (costInfo.context_pct != null) parts.push('CTX ' + costInfo.context_pct + '%');
+    if (costInfo.context_pct != null) parts.push(costInfo.context_pct + '% remaining');
     if (parts.length === 0) {
       costBadge.style.display = 'none';
       return;
     }
     costBadge.textContent = parts.join(' \u00b7 ');
     costBadge.style.display = '';
-    // Color-code by context usage
+    // Color-code by context REMAINING: high = green (plenty left), low = red (running out)
     var pct = costInfo.context_pct;
     if (pct != null) {
-      var color = pct <= 30 ? '#4ade80' : pct <= 50 ? '#facc15' : pct <= 80 ? '#f97316' : '#ef4444';
+      var color = pct >= 70 ? '#4ade80' : pct >= 40 ? '#facc15' : pct >= 20 ? '#f97316' : '#ef4444';
       costBadge.style.color = color;
       costBadge.style.borderColor = color;
     } else {

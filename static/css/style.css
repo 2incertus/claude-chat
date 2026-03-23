@@ -2022,6 +2022,14 @@ button:focus-visible { outline-offset: -2px; }
     padding-left: 4px;
   }
 
+  /* Hide swipe actions on desktop -- mobile-only pattern */
+  .swipe-actions {
+    display: none;
+  }
+  .session-card-wrapper .session-card {
+    transform: none !important;
+  }
+
   /* Desktop hover effects on session cards */
   .session-card:hover {
     background: var(--overlay-hover);
