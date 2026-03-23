@@ -180,6 +180,8 @@
 
   var backBtn = document.getElementById('backBtn');
   var chatTitle = document.getElementById('chatTitle');
+  var costBadge = document.getElementById('costBadge');
+  // bottomInfo removed — cost badge now inline in special-keys row
   var chatStatus = document.getElementById('chatStatus');
   var chatFeed = document.getElementById('chatFeed');
   var typingIndicator = document.getElementById('typingIndicator');
@@ -199,6 +201,8 @@
   var uploadToast = document.getElementById('uploadToast');
   var bellBtn = document.getElementById('bellBtn');
   var refreshBtn = document.getElementById('refreshBtn');
+  var copyAllBtn = document.getElementById('copyAllBtn');
+  var exportBtn = document.getElementById('exportBtn');
   var gearBtn = document.getElementById('gearBtn');
   var settingsBackdrop = document.getElementById('settingsBackdrop');
   var settingsPanel = document.getElementById('settingsPanel');
@@ -329,6 +333,7 @@
     stopPolling();
     stopTTS();
     hidePreview();
+    updateCostBadge(null);
 
     if (isDesktop()) {
       // On desktop, keep both panels visible
@@ -442,15 +447,142 @@
     loadSessions();
   }
 
+  // ========== Session Folder Helpers ==========
+  function getSessionFolders() {
+    try { return JSON.parse(localStorage.getItem('session_folders') || '{}'); } catch(e) { return {}; }
+  }
+  function setSessionFolder(sessionName, folder) {
+    var folders = getSessionFolders();
+    if (folder) folders[sessionName] = folder;
+    else delete folders[sessionName];
+    localStorage.setItem('session_folders', JSON.stringify(folders));
+  }
+  function getCollapsedFolders() {
+    try { return JSON.parse(localStorage.getItem('collapsed_folders') || '[]'); } catch(e) { return []; }
+  }
+  function toggleFolderCollapsed(folderName) {
+    var collapsed = getCollapsedFolders();
+    var idx = collapsed.indexOf(folderName);
+    if (idx >= 0) collapsed.splice(idx, 1);
+    else collapsed.push(folderName);
+    localStorage.setItem('collapsed_folders', JSON.stringify(collapsed));
+    return idx < 0;
+  }
+
+  function createFolderHeader(name, count, isCollapsed) {
+    var header = document.createElement('div');
+    header.className = 'folder-header' + (isCollapsed ? ' collapsed' : '');
+    header.setAttribute('data-folder', name);
+    var chevron = document.createElement('span');
+    chevron.className = 'folder-chevron';
+    chevron.textContent = '\u25B6';
+    var label = document.createElement('span');
+    label.textContent = ' ' + name + ' ';
+    var badge = document.createElement('span');
+    badge.className = 'folder-count';
+    badge.textContent = count;
+    header.appendChild(chevron);
+    header.appendChild(label);
+    header.appendChild(badge);
+    header.addEventListener('click', function() {
+      var nowCollapsed = toggleFolderCollapsed(name);
+      header.classList.toggle('collapsed', nowCollapsed);
+      var next = header.nextElementSibling;
+      while (next && !next.classList.contains('folder-header')) {
+        next.style.display = nowCollapsed ? 'none' : '';
+        next = next.nextElementSibling;
+      }
+    });
+    return header;
+  }
+
+  function showFolderPicker(sessionName, anchorEl) {
+    var existing = document.querySelector('.folder-picker-overlay');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'folder-picker-overlay';
+    overlay.addEventListener('click', function() { overlay.remove(); });
+
+    var picker = document.createElement('div');
+    picker.className = 'folder-picker';
+    picker.addEventListener('click', function(e) { e.stopPropagation(); });
+
+    var titleEl = document.createElement('div');
+    titleEl.className = 'folder-picker-title';
+    titleEl.textContent = 'Move to folder';
+    picker.appendChild(titleEl);
+
+    var currentFolder = getSessionFolders()[sessionName] || '';
+    var defaults = ['Active', 'Monitoring', 'Archive'];
+    // Collect all unique folder names already in use
+    var allFolders = getSessionFolders();
+    var customFolders = [];
+    Object.keys(allFolders).forEach(function(k) {
+      var f = allFolders[k];
+      if (f && defaults.indexOf(f) < 0 && customFolders.indexOf(f) < 0) customFolders.push(f);
+    });
+    var presets = [''].concat(defaults).concat(customFolders.sort());
+    presets.forEach(function(f) {
+      var btn = document.createElement('button');
+      btn.className = 'folder-picker-option' + (currentFolder === f ? ' selected' : '');
+      btn.textContent = f || 'None';
+      btn.addEventListener('click', function() {
+        setSessionFolder(sessionName, f);
+        overlay.remove();
+        showActionToast(f ? 'Moved to ' + f : 'Removed from folder', 'success');
+        loadSessions();
+      });
+      picker.appendChild(btn);
+    });
+
+    var sep = document.createElement('div');
+    sep.className = 'folder-picker-sep';
+    picker.appendChild(sep);
+
+    var customRow = document.createElement('div');
+    customRow.className = 'folder-picker-custom';
+    var customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.placeholder = 'Custom folder...';
+    customInput.className = 'folder-picker-input';
+    var customBtn = document.createElement('button');
+    customBtn.className = 'folder-picker-go';
+    customBtn.textContent = 'Go';
+    customBtn.addEventListener('click', function() {
+      var val = customInput.value.trim();
+      if (val) {
+        setSessionFolder(sessionName, val);
+        overlay.remove();
+        showActionToast('Moved to ' + val, 'success');
+        loadSessions();
+      }
+    });
+    customInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') customBtn.click();
+    });
+    customRow.appendChild(customInput);
+    customRow.appendChild(customBtn);
+    picker.appendChild(customRow);
+
+    overlay.appendChild(picker);
+    document.body.appendChild(overlay);
+    customInput.focus();
+  }
+
   function renderSessionList(sessions) {
     // Remove old batch action button
     var oldBatch = sessionListEl.parentNode.querySelector('.batch-action-btn');
     if (oldBatch) oldBatch.remove();
 
-    // Remove old groups, wrappers, and bare cards
+    // Remove old groups, folder headers, wrappers, and bare cards
     var oldGroups = sessionListEl.querySelectorAll('.session-group');
     for (var i = 0; i < oldGroups.length; i++) {
       sessionListEl.removeChild(oldGroups[i]);
+    }
+    var oldFolderHeaders = sessionListEl.querySelectorAll('.folder-header');
+    for (var i = 0; i < oldFolderHeaders.length; i++) {
+      sessionListEl.removeChild(oldFolderHeaders[i]);
     }
     var oldWrappers = sessionListEl.querySelectorAll('.session-card-wrapper');
     for (var i = 0; i < oldWrappers.length; i++) {
@@ -577,6 +709,20 @@
         if (s.state === 'dead') { dismissSession(s.name); } else { killSession(s.name); }
       });
       actions.appendChild(actionBtn);
+      var folderBtn = document.createElement('button');
+      folderBtn.className = 'swipe-action-btn folder';
+      folderBtn.textContent = 'Folder';
+      folderBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        // Reset swipe position
+        var cardEl = wrapper.querySelector('.session-card');
+        if (cardEl) {
+          cardEl.style.transition = 'transform 200ms ease-out';
+          cardEl.style.transform = 'translateX(0)';
+        }
+        showFolderPicker(s.name, folderBtn);
+      });
+      actions.appendChild(folderBtn);
       wrapper.appendChild(actions);
 
       var isPinned = pinned.indexOf(s.name) >= 0;
@@ -627,6 +773,7 @@
         card.appendChild(preview);
       }
 
+
       if (s.state === 'dead') {
         var respawnBtn = document.createElement('button');
         respawnBtn.className = 'respawn-btn';
@@ -666,7 +813,7 @@
         var dx = currentX - startX;
         var dy = Math.abs(e.touches[0].clientY - startY);
         if ((Math.abs(dx) > 10 || dy > 10) && cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
-        if (dx < 0) card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
+        if (dx < 0) card.style.transform = 'translateX(' + Math.max(dx, -160) + 'px)';
       }, { passive: true });
       card.addEventListener('touchend', function() {
         if (cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
@@ -674,7 +821,7 @@
         swiping = false;
         card.style.transition = 'transform 200ms ease-out';
         var dx = currentX - startX;
-        card.style.transform = dx < -60 ? 'translateX(-80px)' : 'translateX(0)';
+        card.style.transform = dx < -60 ? 'translateX(-140px)' : 'translateX(0)';
       }, { passive: true });
 
       return wrapper;
@@ -693,50 +840,92 @@
     var collapsedGroups = {};
     try { collapsedGroups = JSON.parse(localStorage.getItem('collapsed_groups') || '{}'); } catch(e) {}
 
-    // If only one group, render flat (no group headers)
-    if (groupOrder.length <= 1) {
-      visibleSessions.forEach(function(s) {
-        sessionListEl.appendChild(buildCardWrapper(s));
-      });
+    // Build all card wrappers keyed by session name
+    var allWrappers = [];
+    visibleSessions.forEach(function(s) {
+      allWrappers.push({ session: s, wrapper: buildCardWrapper(s) });
+    });
+
+    // Separate sessions by folder assignment
+    var sessionFolders = getSessionFolders();
+    var ungrouped = [];
+    var folderGroups = {};
+    var folderOrder = [];
+    allWrappers.forEach(function(item) {
+      var folder = sessionFolders[item.session.name];
+      if (folder) {
+        if (!folderGroups[folder]) { folderGroups[folder] = []; folderOrder.push(folder); }
+        folderGroups[folder].push(item);
+      } else {
+        ungrouped.push(item);
+      }
+    });
+
+    var hasFolders = folderOrder.length > 0;
+    var collapsedFoldersList = getCollapsedFolders();
+
+    if (!hasFolders) {
+      // No folder assignments -- use original cwd grouping
+      if (groupOrder.length <= 1) {
+        visibleSessions.forEach(function(s) {
+          var match = allWrappers.filter(function(w) { return w.session === s; })[0];
+          if (match) sessionListEl.appendChild(match.wrapper);
+        });
+      } else {
+        groupOrder.forEach(function(groupPath) {
+          var groupSessions = groups[groupPath];
+          var groupEl = document.createElement('div');
+          groupEl.className = 'session-group' + (collapsedGroups[groupPath] ? ' collapsed' : '');
+
+          var header = document.createElement('div');
+          header.className = 'session-group-header';
+          var chevron = document.createElement('span');
+          chevron.className = 'session-group-chevron';
+          chevron.textContent = '\u25BC';
+          var pathEl = document.createElement('span');
+          pathEl.className = 'session-group-path';
+          var displayPath = groupPath.replace(/^\/home\/[^/]+\//, '~/');
+          pathEl.textContent = displayPath;
+          var countEl = document.createElement('span');
+          countEl.className = 'session-group-count';
+          countEl.textContent = '(' + groupSessions.length + ')';
+          header.appendChild(chevron);
+          header.appendChild(pathEl);
+          header.appendChild(countEl);
+
+          header.addEventListener('click', function() {
+            var isCollapsed = groupEl.classList.toggle('collapsed');
+            collapsedGroups[groupPath] = isCollapsed;
+            try { localStorage.setItem('collapsed_groups', JSON.stringify(collapsedGroups)); } catch(e) {}
+          });
+
+          groupEl.appendChild(header);
+
+          var itemsEl = document.createElement('div');
+          itemsEl.className = 'session-group-items';
+          groupSessions.forEach(function(s) {
+            var match = allWrappers.filter(function(w) { return w.session === s; })[0];
+            if (match) itemsEl.appendChild(match.wrapper);
+          });
+          groupEl.appendChild(itemsEl);
+          sessionListEl.appendChild(groupEl);
+        });
+      }
     } else {
-      // Render grouped
-      groupOrder.forEach(function(groupPath) {
-        var groupSessions = groups[groupPath];
-        var groupEl = document.createElement('div');
-        groupEl.className = 'session-group' + (collapsedGroups[groupPath] ? ' collapsed' : '');
+      // Folder-based grouping: ungrouped first, then each folder
+      ungrouped.forEach(function(item) {
+        sessionListEl.appendChild(item.wrapper);
+      });
 
-        var header = document.createElement('div');
-        header.className = 'session-group-header';
-        var chevron = document.createElement('span');
-        chevron.className = 'session-group-chevron';
-        chevron.textContent = '\u25BC';
-        var pathEl = document.createElement('span');
-        pathEl.className = 'session-group-path';
-        // Shorten home dir
-        var displayPath = groupPath.replace(/^\/home\/[^/]+\//, '~/');
-        pathEl.textContent = displayPath;
-        var countEl = document.createElement('span');
-        countEl.className = 'session-group-count';
-        countEl.textContent = '(' + groupSessions.length + ')';
-        header.appendChild(chevron);
-        header.appendChild(pathEl);
-        header.appendChild(countEl);
-
-        header.addEventListener('click', function() {
-          var isCollapsed = groupEl.classList.toggle('collapsed');
-          collapsedGroups[groupPath] = isCollapsed;
-          try { localStorage.setItem('collapsed_groups', JSON.stringify(collapsedGroups)); } catch(e) {}
+      folderOrder.forEach(function(folderName) {
+        var items = folderGroups[folderName];
+        var isCollapsed = collapsedFoldersList.indexOf(folderName) >= 0;
+        var fHeader = createFolderHeader(folderName, items.length, isCollapsed);
+        sessionListEl.appendChild(fHeader);
+        items.forEach(function(item) {
+          item.wrapper.style.display = isCollapsed ? 'none' : '';
+          sessionListEl.appendChild(item.wrapper);
         });
-
-        groupEl.appendChild(header);
-
-        var itemsEl = document.createElement('div');
-        itemsEl.className = 'session-group-items';
-        groupSessions.forEach(function(s) {
-          itemsEl.appendChild(buildCardWrapper(s));
-        });
-        groupEl.appendChild(itemsEl);
-        sessionListEl.appendChild(groupEl);
       });
     }
 
@@ -789,6 +978,7 @@
         if (!isEditingTitle) chatTitle.textContent = data.title || data.name;
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
@@ -826,6 +1016,33 @@
     } else if (prevSessionStatus !== 'working' && status === 'working') {
       workingSessionCount = Math.max(1, workingSessionCount + 1);
       updateTabTitle();
+    }
+  }
+
+  function updateCostBadge(costInfo) {
+    if (!costBadge) return;
+    if (!costInfo) {
+      costBadge.style.display = 'none';
+      return;
+    }
+    var parts = [];
+    if (costInfo.cost != null) parts.push('$' + costInfo.cost.toFixed(2));
+    if (costInfo.context_pct != null) parts.push('CTX ' + costInfo.context_pct + '%');
+    if (parts.length === 0) {
+      costBadge.style.display = 'none';
+      return;
+    }
+    costBadge.textContent = parts.join(' \u00b7 ');
+    costBadge.style.display = '';
+    // Color-code by context usage
+    var pct = costInfo.context_pct;
+    if (pct != null) {
+      var color = pct <= 30 ? '#4ade80' : pct <= 50 ? '#facc15' : pct <= 80 ? '#f97316' : '#ef4444';
+      costBadge.style.color = color;
+      costBadge.style.borderColor = color;
+    } else {
+      costBadge.style.color = '';
+      costBadge.style.borderColor = '';
     }
   }
 
@@ -1387,7 +1604,8 @@
         el.appendChild(renderMarkdown(userContent));
       }
       // Detect uploaded image paths and show inline preview
-      var imgMatch = userContent.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
+      // tmux wraps long lines mid-filename, so strip newlines before matching
+      var imgMatch = userContent.replace(/\n/g, '').match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
       var imgEl = null;
       if (imgMatch) {
         imgEl = document.createElement('img');
@@ -1863,6 +2081,7 @@
         if (!data) return;
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         contentHash = data.content_hash || '';
         renderMessages(data.messages || []);
         lastMessageCount = (data.messages || []).length;
@@ -1886,6 +2105,7 @@
       .then(function(data) {
         updateStatusDot(data.status);
         updateWaitingInput(data.waiting_input);
+        updateCostBadge(data.cost_info);
         checkNtfyTrigger(currentSession, data.status, data.has_changes ? data.messages : null);
 
         if (data.has_changes && data.messages) {
@@ -2323,7 +2543,9 @@
         uploadToast.textContent = 'Uploaded!';
         setTimeout(function() { uploadToast.style.display = 'none'; }, 2000);
         // Put file reference in text input so user can edit and send
-        textInput.value = 'Please review the file I uploaded at ' + d.path;
+        var ref = 'Please review the file I uploaded at ' + d.path;
+        var existing = textInput.value.trim();
+        textInput.value = existing ? existing + '\n' + ref : ref;
         textInput.focus();
         toggleSendMic();
       })
@@ -2456,6 +2678,111 @@
       setTimeout(function() { btn.style.background = ''; btn.style.color = ''; }, 200);
     });
   }
+
+  // Copy full conversation as markdown
+  function copyConversation() {
+    if (!currentSession) return;
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var messages = (data.conversation || data.messages || []);
+        var title = data.title || data.name || currentSession;
+        var md = '# ' + title + '\n';
+        for (var i = 0; i < messages.length; i++) {
+          var m = messages[i];
+          md += '\n';
+          if (m.role === 'tool') {
+            md += '**' + (m.tool || 'Tool') + '**';
+            if (m.content) md += ' ' + m.content;
+            md += '\n';
+            if (m.tool_results && m.tool_results.length) {
+              for (var j = 0; j < m.tool_results.length; j++) {
+                md += '  ' + m.tool_results[j] + '\n';
+              }
+            }
+          } else {
+            var label = m.role === 'user' ? 'User' : 'Assistant';
+            md += '**' + label + ':**\n' + (m.content || '') + '\n';
+          }
+        }
+        copyToClipboard(md);
+      })
+      .catch(function() {
+        showActionToast('Failed to copy', 'error');
+      });
+  }
+
+  copyAllBtn.addEventListener('click', copyConversation);
+
+  // Export conversation
+  function exportConversation(format) {
+    if (!currentSession) return;
+    var fmt = format || 'markdown';
+    var ext = fmt === 'json' ? '.json' : '.md';
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession) + '/export?fmt=' + fmt)
+      .then(function(r) {
+        if (!r.ok) throw new Error('Export failed');
+        return r.blob();
+      })
+      .then(function(blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = currentSession + ext;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showActionToast('Exported as ' + ext.slice(1).toUpperCase(), 'success');
+      })
+      .catch(function() {
+        showActionToast('Export failed', 'error');
+      });
+  }
+
+  function closeExportDropdown() {
+    var existing = document.getElementById('exportDropdown');
+    if (existing) existing.remove();
+  }
+
+  exportBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    var existing = document.getElementById('exportDropdown');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    var dd = document.createElement('div');
+    dd.id = 'exportDropdown';
+    dd.style.cssText = 'position:absolute;top:100%;right:0;margin-top:6px;background:var(--surface2);border:1px solid var(--border-medium);border-radius:8px;padding:4px 0;z-index:100;min-width:150px;box-shadow:0 4px 20px rgba(0,0,0,0.4);';
+    var btnMd = document.createElement('button');
+    btnMd.textContent = 'Markdown (.md)';
+    btnMd.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;color:var(--text);font-size:0.82rem;cursor:pointer;font-family:inherit;';
+    btnMd.addEventListener('mouseenter', function() { this.style.background = 'var(--surface3)'; });
+    btnMd.addEventListener('mouseleave', function() { this.style.background = 'none'; });
+    btnMd.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      closeExportDropdown();
+      exportConversation('markdown');
+    });
+    var btnJson = document.createElement('button');
+    btnJson.textContent = 'JSON (.json)';
+    btnJson.style.cssText = 'display:block;width:100%;text-align:left;padding:8px 14px;background:none;border:none;color:var(--text);font-size:0.82rem;cursor:pointer;font-family:inherit;';
+    btnJson.addEventListener('mouseenter', function() { this.style.background = 'var(--surface3)'; });
+    btnJson.addEventListener('mouseleave', function() { this.style.background = 'none'; });
+    btnJson.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      closeExportDropdown();
+      exportConversation('json');
+    });
+    dd.appendChild(btnMd);
+    dd.appendChild(btnJson);
+    exportBtn.appendChild(dd);
+  });
+
+  document.addEventListener('click', function() {
+    closeExportDropdown();
+  });
 
   // Force refresh button
   refreshBtn.addEventListener('click', function() {
@@ -2837,10 +3164,11 @@
   function createSession(path, name) {
     closeNewSession();
     showActionToast('Creating session...', 'info');
+    var payload = { path: path, name: name };
     authFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: path, name: name })
+      body: JSON.stringify(payload)
     })
     .then(function(r) {
       if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'Failed'); });
@@ -3065,6 +3393,8 @@
   var historyBackdrop = document.getElementById('historyBackdrop');
   var historyPanel = document.getElementById('historyPanel');
   var historyList = document.getElementById('historyList');
+  var shortcutsBackdrop = document.getElementById('shortcutsBackdrop');
+  var shortcutsPanel = document.getElementById('shortcutsPanel');
 
   function formatHistoryTime(epochMs) {
     if (!epochMs) return '';
@@ -3144,6 +3474,39 @@
 
   historyBtn.addEventListener('click', openHistory);
   historyBackdrop.addEventListener('click', closeHistory);
+
+  // ========== Shortcuts Modal ==========
+  function openShortcuts() {
+    shortcutsBackdrop.classList.add('visible');
+    shortcutsPanel.classList.add('visible');
+  }
+
+  function closeShortcuts() {
+    shortcutsBackdrop.classList.remove('visible');
+    shortcutsPanel.classList.remove('visible');
+  }
+
+  shortcutsBackdrop.addEventListener('click', closeShortcuts);
+
+  // Mobile "?" button opens shortcuts
+  var mobileShortcutsBtn = document.getElementById('mobileShortcutsBtn');
+  if (mobileShortcutsBtn) {
+    mobileShortcutsBtn.addEventListener('click', openShortcuts);
+  }
+
+  // Action buttons inside shortcuts panel
+  var actionCopyAll = document.getElementById('actionCopyAll');
+  var actionExportMd = document.getElementById('actionExportMd');
+  var actionExportJson = document.getElementById('actionExportJson');
+  var actionStarFilter = document.getElementById('actionStarFilter');
+  if (actionCopyAll) actionCopyAll.addEventListener('click', function() { closeShortcuts(); copyConversation(); });
+  if (actionExportMd) actionExportMd.addEventListener('click', function() { closeShortcuts(); exportConversation('markdown'); });
+  if (actionExportJson) actionExportJson.addEventListener('click', function() { closeShortcuts(); exportConversation('json'); });
+  if (actionStarFilter) actionStarFilter.addEventListener('click', function() {
+    closeShortcuts();
+    if (starFilterBtn) starFilterBtn.click();
+  });
+
   // ========== Keyboard Navigation ==========
   document.addEventListener('keydown', function(e) {
     var tag = (e.target.tagName || '').toLowerCase();
@@ -3151,10 +3514,16 @@
     var settingsOpen = settingsPanel.classList.contains('visible');
     var newSessionOpen = newSessionPanel.classList.contains('visible');
     var historyOpen = historyPanel.classList.contains('visible');
+    var shortcutsOpen = shortcutsPanel.classList.contains('visible');
     var paletteOpen = cmdPalette.classList.contains('visible');
 
     // Escape: close settings/new-session/command-palette, or go back to session list
     if (e.key === 'Escape') {
+      if (shortcutsOpen) {
+        closeShortcuts();
+        e.preventDefault();
+        return;
+      }
       if (settingsOpen) {
         closeSettings();
         e.preventDefault();
@@ -3191,8 +3560,33 @@
       }
     }
 
+    // Ctrl/Cmd+Shift+C: copy full conversation as markdown
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
+      e.preventDefault();
+      copyConversation();
+      return;
+    }
+
+    // Ctrl/Cmd+Shift+E: export conversation as markdown
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'E') {
+      e.preventDefault();
+      exportConversation('markdown');
+      return;
+    }
+
     // Don't handle other shortcuts when typing in inputs
     if (isInput) return;
+
+    // ?: toggle shortcuts panel
+    if (e.key === '?' && !e.metaKey && !e.ctrlKey) {
+      if (shortcutsOpen) {
+        closeShortcuts();
+      } else {
+        openShortcuts();
+      }
+      e.preventDefault();
+      return;
+    }
 
     // Cmd/Ctrl + K: focus text input
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {

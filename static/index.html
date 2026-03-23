@@ -9,7 +9,7 @@
   <meta name="theme-color" content="#0A0A0A">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/css/style.css?v=30">
+  <link rel="stylesheet" href="/static/css/style.css?v=34">
 </head>
 <body>
 <div class="app-shell">
@@ -52,6 +52,9 @@
     <div class="header">
       <button class="back-btn" id="backBtn">&#8249;</button>
       <span class="session-header-title" id="chatTitle">Session</span>
+      <button class="refresh-btn" id="copyAllBtn" title="Copy conversation"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+      <button class="refresh-btn mobile-shortcuts-btn" id="mobileShortcutsBtn" title="Shortcuts &amp; actions">?</button>
+      <button class="refresh-btn" id="exportBtn" title="Export conversation" style="position:relative;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
       <button class="refresh-btn" id="refreshBtn" title="Force refresh"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg></button>
       <button class="bell-btn" id="bellBtn" title="Notify when done"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg></button>
       <button class="refresh-btn" id="starFilterBtn" title="Show starred only" style="display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
@@ -85,6 +88,7 @@
         <button class="special-key" data-key="shift-tab" title="Shift+Tab / Reject">&#8679;Tab</button>
         <button class="special-key" data-key="C-c" title="Ctrl+C / Interrupt">^C</button>
         <button class="special-key" data-key="Up" title="Up arrow">&#9650;</button>
+        <span class="cost-badge" id="costBadge" style="display:none;"></span>
       </div>
     </div>
     <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,.txt,.py,.js,.ts,.json,.md,.csv">
@@ -120,11 +124,55 @@
   <div id="historyList"></div>
 </div>
 
+<!-- Shortcuts modal -->
+<div class="shortcuts-backdrop" id="shortcutsBackdrop"></div>
+<div class="shortcuts-panel" id="shortcutsPanel">
+  <div class="settings-handle"></div>
+  <h3 class="settings-title">Keyboard Shortcuts</h3>
+  <div class="shortcuts-grid">
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Navigation</div>
+      <div class="shortcut-row"><kbd>Esc</kbd><span>Back / close panel</span></div>
+      <div class="shortcut-row"><kbd>&#8593;</kbd> <kbd>&#8595;</kbd><span>Navigate session list</span></div>
+      <div class="shortcut-row"><kbd>Enter</kbd><span>Open selected session</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Chat</div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; K</kbd><span>Focus message input</span></div>
+      <div class="shortcut-row"><kbd>Enter</kbd><span>Send message</span></div>
+      <div class="shortcut-row"><kbd>Shift Enter</kbd><span>New line</span></div>
+      <div class="shortcut-row"><kbd>/</kbd><span>Open command palette</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Special Keys (sent to session)</div>
+      <div class="shortcut-row"><kbd>Esc</kbd><span>Cancel / dismiss</span></div>
+      <div class="shortcut-row"><kbd>Tab</kbd><span>Accept suggestion</span></div>
+      <div class="shortcut-row"><kbd>&#8679;Tab</kbd><span>Reject suggestion</span></div>
+      <div class="shortcut-row"><kbd>^C</kbd><span>Interrupt</span></div>
+    </div>
+    <div class="shortcut-section">
+      <div class="shortcut-section-title">Quick Access</div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; Shift E</kbd><span>Export conversation</span></div>
+      <div class="shortcut-row"><kbd>Ctrl/&#8984; Shift C</kbd><span>Copy all messages</span></div>
+      <div class="shortcut-row"><kbd>?</kbd><span>This help panel</span></div>
+    </div>
+  </div>
+  <div class="shortcuts-actions" id="shortcutsActions">
+    <div class="shortcut-section-title">Actions</div>
+    <div class="shortcuts-action-row">
+      <button class="shortcuts-action-btn" id="actionCopyAll">Copy conversation</button>
+      <button class="shortcuts-action-btn" id="actionExportMd">Export (.md)</button>
+      <button class="shortcuts-action-btn" id="actionExportJson">Export (.json)</button>
+      <button class="shortcuts-action-btn" id="actionStarFilter">Show starred only</button>
+    </div>
+  </div>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/static/sw.js').catch(function() {});
 }
 </script>
-<script src="/static/js/app.js?v=30"></script>
+<script src="/static/js/app.js?v=34"></script>
 </body>
 </html>

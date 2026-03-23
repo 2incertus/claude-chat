@@ -73,15 +73,28 @@ TITLES_FILE = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "titles.jso
 _title_lock = asyncio.Lock()
 
 
+def _save_titles():
+    """Persist title_cache to disk atomically."""
+    tmp = TITLES_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(title_cache, f)
+    os.replace(tmp, TITLES_FILE)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
     http_client = httpx.AsyncClient(timeout=10.0)
-    # Load persisted titles
+    # Load persisted titles and tags
     if os.path.exists(TITLES_FILE):
         try:
             with open(TITLES_FILE) as f:
-                title_cache.update(json.load(f))
+                raw = json.load(f)
+            for name, val in raw.items():
+                if isinstance(val, dict):
+                    title_cache[name] = val.get("title", name)
+                else:
+                    title_cache[name] = val
         except Exception:
             pass
     yield
@@ -387,13 +400,13 @@ def time_ago(epoch_ms: int) -> str:
     return f"{int(delta // 86400)}d ago"
 
 
-async def generate_title(session_name: str, messages: list[dict]) -> str:
-    """Generate a short title from the first 3 user messages via LiteLLM."""
+async def generate_title(session_name: str, messages: list[dict]) -> tuple[str, list[str]]:
+    """Generate a short title and tags from the first 3 user messages via LiteLLM."""
     user_msgs = [m for m in messages if m["role"] == "user"][:3]
     if not user_msgs:
         return session_name
 
-    prompt_content = "\n".join(m["content"] for m in user_msgs)
+    snippet = " | ".join(m["content"][:200] for m in user_msgs)
     try:
         resp = await http_client.post(
             LITELLM_URL,
@@ -401,32 +414,50 @@ async def generate_title(session_name: str, messages: list[dict]) -> str:
                 "model": "glm-4.5-air",
                 "max_tokens": 20,
                 "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "Generate a very short title (max 5 words) for this conversation. "
-                            "Reply with ONLY the title, no punctuation or quotes."
-                        ),
-                    },
-                    {"role": "user", "content": prompt_content},
+                    {"role": "system", "content": "Generate a short title (max 6 words) for this AI coding conversation. Return ONLY the title, nothing else."},
+                    {"role": "user", "content": snippet},
                 ],
             },
             timeout=8.0,
         )
         resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"].strip()[:60]
+        title = resp.json()["choices"][0]["message"]["content"].strip().strip('"\'')[:60]
+        return title or session_name
     except Exception:
-        # fallback: first user message truncated
-        return (user_msgs[0]["content"][:50] if user_msgs else session_name)
+        return user_msgs[0]["content"][:50] if user_msgs else session_name
 
 
 async def _refresh_title(session_name: str, messages: list[dict]) -> None:
-    """Background task: generate title and cache it."""
+    """Background task: generate title, then cache it."""
     if session_name in title_cache:
         return
     title = await generate_title(session_name, messages)
     title_cache[session_name] = title
+    _save_titles()
+
+
+COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
+CTX_RE = re.compile(r"CTX\s+(\d+)%")
+
+
+def extract_cost_info(raw: str) -> dict | None:
+    """Extract cost/context info from last lines of pane output."""
+    lines = raw.strip().splitlines()
+    tail = lines[-50:] if len(lines) > 50 else lines
+    cost = None
+    ctx_pct = None
+    for line in reversed(tail):
+        if cost is None:
+            m = COST_RE.search(line)
+            if m:
+                cost = float(m.group(1))
+        if ctx_pct is None:
+            m = CTX_RE.search(line)
+            if m:
+                ctx_pct = int(m.group(1))
+    if cost is not None or ctx_pct is not None:
+        return {"cost": cost, "context_pct": ctx_pct}
+    return None
 
 
 COST_RE = re.compile(r"\$\s*(\d+\.?\d*)")
@@ -875,15 +906,7 @@ async def set_session_title(name: str, body: dict):
     title_cache[name] = title[:60]
     async with _title_lock:
         try:
-            existing = {}
-            if os.path.exists(TITLES_FILE):
-                with open(TITLES_FILE) as f:
-                    existing = json.load(f)
-            existing[name] = title[:60]
-            tmp = TITLES_FILE + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(existing, f)
-            os.replace(tmp, TITLES_FILE)
+            _save_titles()
         except Exception:
             pass
     return {"title": title_cache[name]}
@@ -1118,29 +1141,36 @@ def _load_config() -> dict:
         with open(CONFIG_FILE) as f:
             return json.load(f)
     except Exception:
-        return {"presets": []}
+        return {}
+
+DEFAULT_PRESETS = [
+    {"name": "Home", "path": "/home/ubuntu"},
+    {"name": "Claude Chat", "path": "/home/ubuntu/docker/claude-chat"},
+    {"name": "Docker", "path": "/home/ubuntu/docker"},
+]
+
+
+def _get_presets() -> list[dict]:
+    config = _load_config()
+    return config.get("presets", None) or DEFAULT_PRESETS
 
 
 def _is_allowed_path(path: str) -> bool:
-    config = _load_config()
-    allowed_paths = {p["path"] for p in config.get("presets", [])}
+    allowed_paths = {p["path"] for p in _get_presets()}
     if path in allowed_paths:
         return True
-    return path.startswith("/home/ubuntu/")
+    return path == "/home/ubuntu" or path.startswith("/home/ubuntu/")
 
 
 @app.get("/api/config")
 async def get_config():
-    return _load_config()
+    return {"presets": _get_presets()}
 
 
 @app.post("/api/sessions")
 async def create_session(body: dict):
     path = os.path.realpath(body.get("path", "/home/ubuntu"))
     name = body.get("name", "")
-    initial_command = body.get("initial_command", "")
-    mode = body.get("mode", "")
-
     if not _is_allowed_path(path):
         raise HTTPException(status_code=400, detail=f"Path not allowed: {path}")
 
@@ -1158,15 +1188,7 @@ async def create_session(body: dict):
     if _session_exists(name):
         raise HTTPException(status_code=409, detail=f"Session {name} already exists")
 
-    claude_cmd = "/home/ubuntu/.local/bin/claude"
-    if mode and mode in ("plan", "code", "ask"):
-        claude_cmd += f" --mode {mode}"
-
-    run_tmux("new-session", "-d", "-s", name, "-c", path, claude_cmd)
-
-    if initial_command:
-        await asyncio.sleep(2)
-        run_tmux("send-keys", "-t", name, "-l", initial_command)
-        run_tmux("send-keys", "-t", name, "Enter")
+    run_tmux("new-session", "-d", "-s", name, "-c", path,
+             "/home/ubuntu/.local/bin/claude")
 
     return {"created": True, "name": name, "path": path}
