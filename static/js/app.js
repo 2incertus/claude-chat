@@ -3644,6 +3644,22 @@
     }
   });
 
+  // ========== iOS Keyboard Viewport Fix ==========
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function() {
+      var vv = window.visualViewport;
+      document.documentElement.style.height = vv.height + 'px';
+      // Scroll to keep input visible without pushing header off screen
+      if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') {
+        document.activeElement.scrollIntoView({ block: 'nearest' });
+      }
+    });
+    window.visualViewport.addEventListener('scroll', function() {
+      // Prevent iOS from scrolling the fixed layout
+      window.scrollTo(0, 0);
+    });
+  }
+
   // ========== Init ==========
   function initApp() {
     loadSessions();
