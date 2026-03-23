@@ -1637,30 +1637,34 @@
     chatFeed.appendChild(block);
   }
 
-  function tryCreateImagePreview(content) {
-    // Detect uploaded image paths -- strip newlines since tmux wraps mid-filename
+  function tryCreateImagePreviews(content) {
+    // Detect ALL uploaded image paths -- strip newlines since tmux wraps mid-filename
     var cleaned = content.replace(/\n/g, '');
-    var match = cleaned.match(/\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/i);
-    if (!match) return null;
-    var img = document.createElement('img');
-    img.className = 'msg-image';
-    img.alt = match[1];
-    img.loading = 'lazy';
-    (function(el, filename) {
-      authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
-        if (r.ok) return r.blob();
-      }).then(function(blob) {
-        if (blob) {
-          var url = URL.createObjectURL(blob);
-          el.src = url;
-          el.addEventListener('click', function(e) {
-            e.stopPropagation();
-            showImageOverlay(url);
-          });
-        }
-      });
-    })(img, match[1]);
-    return img;
+    var re = /\/srv\/appdata\/claude-chat\/uploads\/([^\s]+\.(?:png|jpg|jpeg|gif|webp))/gi;
+    var imgs = [];
+    var match;
+    while ((match = re.exec(cleaned)) !== null) {
+      var img = document.createElement('img');
+      img.className = 'msg-image';
+      img.alt = match[1];
+      img.loading = 'lazy';
+      (function(el, filename) {
+        authFetch('/api/uploads/' + encodeURIComponent(filename)).then(function(r) {
+          if (r.ok) return r.blob();
+        }).then(function(blob) {
+          if (blob) {
+            var url = URL.createObjectURL(blob);
+            el.src = url;
+            el.addEventListener('click', function(e) {
+              e.stopPropagation();
+              showImageOverlay(url);
+            });
+          }
+        });
+      })(img, match[1]);
+      imgs.push(img);
+    }
+    return imgs.length > 0 ? imgs : null;
   }
 
   function appendMessage(m, animate, allMsgs, msgIdx) {
@@ -1684,13 +1688,13 @@
       } else {
         el.appendChild(renderMarkdown(userContent));
       }
-      var imgEl = tryCreateImagePreview(userContent);
+      var imgEls = tryCreateImagePreviews(userContent);
       if (m._pending) {
         var statusEl = document.createElement('div');
         statusEl.className = 'msg-status msg-status-pending';
         statusEl.textContent = 'Sending\u2026';
         wrapper.appendChild(el);
-        if (imgEl) wrapper.appendChild(imgEl);
+        if (imgEls) imgEls.forEach(function(img) { wrapper.appendChild(img); });
         wrapper.appendChild(statusEl);
         if (!animate) wrapper.style.animation = 'none';
         chatFeed.appendChild(wrapper);
@@ -1721,9 +1725,9 @@
       el.appendChild(uActions);
       if (uIsStarred) el.classList.add('msg-starred');
       // For non-pending user messages with images, use the wrapper
-      if (imgEl) {
+      if (imgEls) {
         wrapper.appendChild(el);
-        wrapper.appendChild(imgEl);
+        imgEls.forEach(function(img) { wrapper.appendChild(img); });
         if (!animate) wrapper.style.animation = 'none';
         chatFeed.appendChild(wrapper);
         return;
@@ -1832,8 +1836,8 @@
         textSpan.appendChild(renderMarkdown(content));
         el.appendChild(textSpan);
         // Show inline image preview if message references an uploaded file
-        var aImgEl = tryCreateImagePreview(content);
-        if (aImgEl) el.appendChild(aImgEl);
+        var aImgEls = tryCreateImagePreviews(content);
+        if (aImgEls) aImgEls.forEach(function(img) { el.appendChild(img); });
         var actions = document.createElement('div');
         actions.className = 'msg-actions';
         var msgCopyBtn = document.createElement('button');
@@ -2591,28 +2595,38 @@
   // ========== File Upload ==========
   attachBtn.addEventListener('click', function() { fileInput.click(); });
   fileInput.addEventListener('change', function() {
-    if (!fileInput.files || !fileInput.files[0] || !currentSession) return;
-    var f = fileInput.files[0];
-    uploadToast.textContent = 'Uploading ' + f.name + '...';
+    if (!fileInput.files || !fileInput.files.length || !currentSession) return;
+    var files = Array.from(fileInput.files);
+    var total = files.length;
+    var done = 0;
+    uploadToast.textContent = 'Uploading ' + total + ' file' + (total > 1 ? 's' : '') + '...';
     uploadToast.style.display = 'block';
-    var fd = new FormData();
-    fd.append('file', f);
-    authFetch('/api/upload/' + encodeURIComponent(currentSession), { method: 'POST', body: fd })
-      .then(function(r) { if (!r.ok) throw new Error('upload failed'); return r.json(); })
-      .then(function(d) {
-        uploadToast.textContent = 'Uploaded!';
-        setTimeout(function() { uploadToast.style.display = 'none'; }, 2000);
-        // Put file reference in text input so user can edit and send
-        var ref = 'Please review the file I uploaded at ' + d.path;
-        var existing = textInput.value.trim();
-        textInput.value = existing ? existing + '\n' + ref : ref;
-        textInput.focus();
-        toggleSendMic();
-      })
-      .catch(function() {
-        uploadToast.textContent = 'Upload failed';
-        setTimeout(function() { uploadToast.style.display = 'none'; }, 3000);
-      });
+
+    files.forEach(function(f) {
+      var fd = new FormData();
+      fd.append('file', f);
+      authFetch('/api/upload/' + encodeURIComponent(currentSession), { method: 'POST', body: fd })
+        .then(function(r) { if (!r.ok) throw new Error('upload failed'); return r.json(); })
+        .then(function(d) {
+          var ref = 'Please review the file I uploaded at ' + d.path;
+          var existing = textInput.value.trim();
+          textInput.value = existing ? existing + '\n' + ref : ref;
+          done++;
+          if (done >= total) {
+            uploadToast.textContent = 'Uploaded ' + total + ' file' + (total > 1 ? 's' : '') + '!';
+            setTimeout(function() { uploadToast.style.display = 'none'; }, 2000);
+            textInput.focus();
+            toggleSendMic();
+          }
+        })
+        .catch(function() {
+          done++;
+          if (done >= total) {
+            uploadToast.textContent = 'Some uploads failed';
+            setTimeout(function() { uploadToast.style.display = 'none'; }, 3000);
+          }
+        });
+    });
     fileInput.value = '';
   });
 
@@ -3703,6 +3717,17 @@
         }
       }
       return;
+    }
+  });
+
+  // ========== iOS Keyboard Fix ==========
+  // Prevent iOS from scrolling the page when keyboard opens
+  document.addEventListener('focusin', function(e) {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+      // Reset any scroll iOS might have applied
+      setTimeout(function() { window.scrollTo(0, 0); }, 50);
+      setTimeout(function() { window.scrollTo(0, 0); }, 150);
+      setTimeout(function() { window.scrollTo(0, 0); }, 300);
     }
   });
 
