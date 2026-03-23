@@ -815,11 +815,60 @@ body {
 .input-area {
   flex-shrink: 0;
   position: relative;
-  padding: 8px 16px max(8px, env(safe-area-inset-bottom, 8px));
+  padding: 8px 16px 4px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   z-index: 12;
 }
+/* Special keys toolbar fills the safe area */
+.special-keys {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 max(4px, env(safe-area-inset-bottom, 4px));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.special-key {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border-medium);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+  min-height: 28px;
+  min-width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 100ms, color 100ms;
+}
+.special-key:active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+/* Refresh button */
+.refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  touch-action: manipulation;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 150ms;
+}
+.refresh-btn:active { color: var(--accent); }
 .text-input-row {
   display: flex;
   align-items: flex-end;

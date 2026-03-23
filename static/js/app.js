@@ -59,12 +59,16 @@
 
     var pinInput = document.createElement('input');
     pinInput.className = 'login-input';
-    pinInput.type = 'password';
-    pinInput.placeholder = '----';
+    pinInput.type = 'tel';
+    pinInput.placeholder = '\u2022\u2022\u2022\u2022';
     pinInput.maxLength = 6;
     pinInput.inputMode = 'numeric';
     pinInput.pattern = '[0-9]*';
     pinInput.autocomplete = 'off';
+    pinInput.style.webkitTextSecurity = 'disc';
+    pinInput.style.letterSpacing = '8px';
+    pinInput.style.textAlign = 'center';
+    pinInput.style.fontSize = '1.5rem';
 
     var errorEl = document.createElement('div');
     errorEl.className = 'login-error';
@@ -191,6 +195,7 @@
   var fileInput = document.getElementById('fileInput');
   var uploadToast = document.getElementById('uploadToast');
   var bellBtn = document.getElementById('bellBtn');
+  var refreshBtn = document.getElementById('refreshBtn');
   var gearBtn = document.getElementById('gearBtn');
   var settingsBackdrop = document.getElementById('settingsBackdrop');
   var settingsPanel = document.getElementById('settingsPanel');
@@ -1584,6 +1589,27 @@
     if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   }
 
+  function forceRefresh() {
+    if (!currentSession) return;
+    contentHash = '';
+    idleCount = 0;
+    stopPolling();
+    // Full reload from session endpoint (not poll)
+    authFetch('/api/sessions/' + encodeURIComponent(currentSession))
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) return;
+        updateStatusDot(data.status);
+        updateWaitingInput(data.waiting_input);
+        contentHash = data.content_hash || '';
+        renderMessages(data.messages || []);
+        lastMessageCount = (data.messages || []).length;
+        scrollToBottom(false);
+        startPolling();
+      })
+      .catch(function() { startPolling(); });
+  }
+
   function doPoll() {
     if (!currentSession) return;
     var url = '/api/sessions/' + encodeURIComponent(currentSession) + '/poll';
@@ -2100,6 +2126,35 @@
       ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>'
       : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>';
   }
+
+  // Special keys toolbar
+  var specialKeysEl = document.getElementById('specialKeys');
+  if (specialKeysEl) {
+    specialKeysEl.addEventListener('click', function(e) {
+      var btn = e.target.closest('.special-key');
+      if (!btn || !currentSession) return;
+      var key = btn.getAttribute('data-key');
+      var tmuxKey = key;
+      if (key === 'shift-tab') tmuxKey = 'BTab';
+      // Send key via tmux send-keys (reuse the send endpoint with special handling)
+      authFetch('/api/sessions/' + encodeURIComponent(currentSession) + '/key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: tmuxKey })
+      });
+      // Visual feedback
+      btn.style.background = 'var(--accent)';
+      btn.style.color = 'white';
+      setTimeout(function() { btn.style.background = ''; btn.style.color = ''; }, 200);
+    });
+  }
+
+  // Force refresh button
+  refreshBtn.addEventListener('click', function() {
+    refreshBtn.style.animation = 'btnSpin 0.5s linear';
+    setTimeout(function() { refreshBtn.style.animation = ''; }, 500);
+    forceRefresh();
+  });
 
   bellBtn.addEventListener('click', function() {
     if (!currentSession) return;

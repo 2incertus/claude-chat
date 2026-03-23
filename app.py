@@ -682,6 +682,22 @@ async def send_to_session(name: str, body: SendBody):
     return {"sent": True, "session": name}
 
 
+ALLOWED_KEYS = {"Escape", "Tab", "BTab", "C-c", "Up", "Down", "Enter", "C-d", "C-u"}
+
+
+@app.post("/api/sessions/{name}/key")
+async def send_key(name: str, body: dict):
+    """Send a special key (Escape, Tab, etc.) to the tmux session."""
+    validate_session_name(name)
+    if not _is_claude_session(name):
+        raise HTTPException(status_code=404, detail="Session not found")
+    key = body.get("key", "")
+    if key not in ALLOWED_KEYS:
+        raise HTTPException(status_code=400, detail=f"Key not allowed: {key}")
+    run_tmux("send-keys", "-t", name, key)
+    return {"sent": True, "key": key}
+
+
 @app.post("/api/sessions/{name}/kill")
 async def kill_session_endpoint(name: str):
     """Kill Claude in the tmux pane. Pane stays alive for respawn."""
