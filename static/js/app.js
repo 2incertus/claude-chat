@@ -2544,7 +2544,9 @@
         uploadToast.textContent = 'Uploaded!';
         setTimeout(function() { uploadToast.style.display = 'none'; }, 2000);
         // Put file reference in text input so user can edit and send
-        textInput.value = 'Please review the file I uploaded at ' + d.path;
+        var ref = 'Please review the file I uploaded at ' + d.path;
+        var existing = textInput.value.trim();
+        textInput.value = existing ? existing + '\n' + ref : ref;
         textInput.focus();
         toggleSendMic();
       })

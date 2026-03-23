@@ -2536,6 +2536,7 @@ body.font-large { font-size: 18px; }
 @media (max-width: 767px) {
   #starFilterBtn { display: none !important; }
   .msg-star-btn { display: none !important; }
+  #copyAllBtn { display: none !important; }
   #screenChat .header .refresh-btn,
   #screenChat .header .bell-btn {
     min-width: 32px;
