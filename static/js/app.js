@@ -3398,26 +3398,27 @@
       // Disable input until ready
       textInput.disabled = true;
       textInput.placeholder = 'Waiting for Claude to start...';
-      // Poll until Claude is ready (❯ prompt visible = idle status)
+      // Poll health endpoint until Claude is ready
       var attempts = 0;
       var readyCheck = setInterval(function() {
         attempts++;
-        authFetch('/api/sessions/' + encodeURIComponent(data.name))
+        authFetch('/api/sessions/' + encodeURIComponent(data.name) + '/health')
           .then(function(r) { return r.ok ? r.json() : null; })
-          .then(function(sess) {
-            if (!sess) return;
-            var ready = sess.status === 'idle' || sess.status === 'waiting_input' || sess.messages.length > 0;
-            if (ready || attempts > 15) {
+          .then(function(health) {
+            if (!health) return;
+            // Update the spinner message
+            var msgEl = chatFeed.querySelector('.session-starting div:last-child');
+            if (msgEl && health.message) msgEl.textContent = health.message;
+
+            if (health.ready || attempts > 15) {
               clearInterval(readyCheck);
               textInput.disabled = false;
               textInput.placeholder = 'Message...';
               textInput.focus();
-              // Replace starting indicator with actual session content
               loadSession(data.name);
-              if (ready) {
+              connectWebSocket(data.name);
+              if (health.ready) {
                 showActionToast('Claude is ready', 'success');
-              } else {
-                showActionToast('Session started (Claude may still be loading)', 'info');
               }
             }
           })
@@ -3426,10 +3427,10 @@
               clearInterval(readyCheck);
               textInput.disabled = false;
               textInput.placeholder = 'Message...';
-              showActionToast('Session created but Claude may not be ready', 'info');
+              loadSession(data.name);
             }
           });
-      }, 2000);
+      }, 1500);
     })
     .catch(function(err) {
       showActionToast(err.message || 'Failed to create session', 'error');
