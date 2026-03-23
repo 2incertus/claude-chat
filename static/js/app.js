@@ -840,9 +840,14 @@
       if (s.state === 'active') {
         card.addEventListener('click', function() {
           if (longPressTriggered) return;
-          card.style.opacity = '0.5';
-          card.style.transform = 'scale(0.97)';
+          card.style.opacity = '0.7';
+          card.style.transform = 'scale(0.98)';
           showSessionView(s.name);
+          // Reset after transition (desktop stays visible)
+          setTimeout(function() {
+            card.style.opacity = '';
+            card.style.transform = '';
+          }, 300);
         });
       }
 
