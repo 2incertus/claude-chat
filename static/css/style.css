@@ -186,6 +186,105 @@ body {
 .bell-btn.active { color: var(--accent); }
 .bell-btn:active { opacity: 0.7; }
 
+/* ===== Search & Filter ===== */
+.search-bar {
+  padding: 8px 16px 4px;
+  flex-shrink: 0;
+}
+.search-bar .search-icon {
+  position: absolute;
+  left: 28px;
+  top: 18px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px 8px 34px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-family: inherit;
+  outline: none;
+}
+.search-input:focus {
+  border-color: var(--accent);
+}
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+.search-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.search-filters::-webkit-scrollbar { display: none; }
+.filter-chip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 3px 10px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 100ms, color 100ms, border-color 100ms;
+}
+.filter-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+/* ===== Session Groups ===== */
+.session-group {
+  margin-bottom: 4px;
+}
+.session-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.session-group-chevron {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+.session-group.collapsed .session-group-chevron {
+  transform: rotate(-90deg);
+}
+.session-group-path {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-group-count {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.session-group.collapsed .session-group-items {
+  display: none;
+}
+
 /* ===== Session List ===== */
 .session-list {
   flex: 1;

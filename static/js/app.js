@@ -174,6 +174,9 @@
   var emptyStateEl = document.getElementById('emptyState');
   var pullIndicator = document.getElementById('pullIndicator');
   var showHiddenToggle = document.getElementById('showHiddenToggle');
+  var searchInput = document.getElementById('searchInput');
+  var searchFilters = document.getElementById('searchFilters');
+  var activeStatusFilter = 'all';
 
   var backBtn = document.getElementById('backBtn');
   var chatTitle = document.getElementById('chatTitle');
@@ -418,7 +421,11 @@
     var oldBatch = sessionListEl.parentNode.querySelector('.batch-action-btn');
     if (oldBatch) oldBatch.remove();
 
-    // Remove old wrappers and bare cards
+    // Remove old groups, wrappers, and bare cards
+    var oldGroups = sessionListEl.querySelectorAll('.session-group');
+    for (var i = 0; i < oldGroups.length; i++) {
+      sessionListEl.removeChild(oldGroups[i]);
+    }
     var oldWrappers = sessionListEl.querySelectorAll('.session-card-wrapper');
     for (var i = 0; i < oldWrappers.length; i++) {
       sessionListEl.removeChild(oldWrappers[i]);
@@ -436,6 +443,25 @@
       return hidden.indexOf(s.name) === -1;
     });
     var hiddenCount = sessions.length - sessions.filter(function(s) { return hidden.indexOf(s.name) === -1; }).length;
+
+    // Apply search filter
+    var searchQuery = (searchInput.value || '').trim().toLowerCase();
+    if (searchQuery) {
+      visibleSessions = visibleSessions.filter(function(s) {
+        return (s.name && s.name.toLowerCase().indexOf(searchQuery) !== -1) ||
+               (s.title && s.title.toLowerCase().indexOf(searchQuery) !== -1) ||
+               (s.cwd && s.cwd.toLowerCase().indexOf(searchQuery) !== -1) ||
+               (s.preview && s.preview.toLowerCase().indexOf(searchQuery) !== -1);
+      });
+    }
+
+    // Apply status filter
+    if (activeStatusFilter !== 'all') {
+      visibleSessions = visibleSessions.filter(function(s) {
+        if (activeStatusFilter === 'dead') return s.state === 'dead';
+        return s.status === activeStatusFilter;
+      });
+    }
 
     // Count active vs total for badge
     var activeCount = visibleSessions.filter(function(s) { return s.state !== 'dead'; }).length;
@@ -511,33 +537,27 @@
       sessionListEl.parentNode.insertBefore(batchBtn, sessionListEl);
     }
 
-    visibleSessions.forEach(function(s) {
+    // Helper: build a session card wrapper (card + swipe + gestures)
+    function buildCardWrapper(s) {
       var wrapper = document.createElement('div');
       wrapper.className = 'session-card-wrapper';
 
-      // Swipe action behind card
       var actions = document.createElement('div');
       actions.className = 'swipe-actions';
       var actionBtn = document.createElement('button');
       actionBtn.className = 'swipe-action-btn ' + (s.state === 'dead' ? 'dismiss' : 'kill');
       actionBtn.textContent = s.state === 'dead' ? 'Dismiss' : 'Kill';
       actionBtn.addEventListener('click', function() {
-        if (s.state === 'dead') {
-          dismissSession(s.name);
-        } else {
-          killSession(s.name);
-        }
+        if (s.state === 'dead') { dismissSession(s.name); } else { killSession(s.name); }
       });
       actions.appendChild(actionBtn);
       wrapper.appendChild(actions);
 
-      // Card
       var isPinned = pinned.indexOf(s.name) >= 0;
       var card = document.createElement('div');
       card.className = 'session-card' + (s.state === 'dead' ? ' dead' : '') + (isPinned ? ' pinned' : '');
       card.setAttribute('data-name', s.name);
 
-      // Pin indicator
       if (isPinned) {
         var pinIcon = document.createElement('span');
         pinIcon.className = 'session-card-pin';
@@ -547,18 +567,14 @@
 
       var top = document.createElement('div');
       top.className = 'session-card-top';
-
       var title = document.createElement('div');
       title.className = 'session-card-title';
       title.textContent = s.title || s.name;
-
       var meta = document.createElement('div');
       meta.className = 'session-card-meta';
-
       var timeEl = document.createElement('span');
       timeEl.className = 'session-card-time';
       timeEl.textContent = s.last_activity || '';
-
       var dot = document.createElement('div');
       var dotClass = 'session-card-status';
       if (s.state !== 'dead') {
@@ -566,7 +582,6 @@
         else if (s.status === 'waiting_input') dotClass += ' waiting';
       }
       dot.className = dotClass;
-
       meta.appendChild(timeEl);
       meta.appendChild(dot);
       if (s.state === 'dead') {
@@ -579,13 +594,6 @@
       top.appendChild(meta);
       card.appendChild(top);
 
-      if (s.cwd) {
-        var cwd = document.createElement('div');
-        cwd.className = 'session-card-cwd';
-        cwd.textContent = s.cwd;
-        card.appendChild(cwd);
-      }
-
       if (s.preview) {
         var preview = document.createElement('div');
         preview.className = 'session-card-preview';
@@ -593,23 +601,17 @@
         card.appendChild(preview);
       }
 
-      // Respawn button for dead sessions
       if (s.state === 'dead') {
         var respawnBtn = document.createElement('button');
         respawnBtn.className = 'respawn-btn';
         respawnBtn.textContent = 'Respawn';
-        respawnBtn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          respawnSession(s.name);
-        });
+        respawnBtn.addEventListener('click', function(e) { e.stopPropagation(); respawnSession(s.name); });
         card.appendChild(respawnBtn);
       }
 
-      // Click to open (only active sessions), skip if long-press triggered
       if (s.state === 'active') {
         card.addEventListener('click', function() {
           if (longPressTriggered) return;
-          // Immediate visual feedback
           card.style.opacity = '0.5';
           card.style.transform = 'scale(0.97)';
           showSessionView(s.name);
@@ -618,11 +620,7 @@
 
       wrapper.appendChild(card);
 
-      // Swipe gesture + long-press to pin
-      // Note: event listener cleanup is handled implicitly -- old cards and their
-      // wrappers are removed from the DOM at the top of renderSessionList() via
-      // removeChild, which makes them eligible for GC along with their listeners.
-      // All touch listeners use { passive: true } to avoid blocking the main thread.
+      // Swipe + long-press gestures
       var startX = 0, currentX = 0, swiping = false;
       var cardLongPress = null;
       var longPressTriggered = false;
@@ -634,25 +632,15 @@
         swiping = true;
         longPressTriggered = false;
         card.style.transition = 'none';
-        // Long-press timer
-        cardLongPress = setTimeout(function() {
-          longPressTriggered = true;
-          togglePin(s.name);
-        }, 500);
+        cardLongPress = setTimeout(function() { longPressTriggered = true; togglePin(s.name); }, 500);
       }, { passive: true });
       card.addEventListener('touchmove', function(e) {
         if (!swiping) return;
         currentX = e.touches[0].clientX;
         var dx = currentX - startX;
         var dy = Math.abs(e.touches[0].clientY - startY);
-        // Cancel long-press if finger moves
-        if ((Math.abs(dx) > 10 || dy > 10) && cardLongPress) {
-          clearTimeout(cardLongPress);
-          cardLongPress = null;
-        }
-        if (dx < 0) { // swipe left only
-          card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
-        }
+        if ((Math.abs(dx) > 10 || dy > 10) && cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
+        if (dx < 0) card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
       }, { passive: true });
       card.addEventListener('touchend', function() {
         if (cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
@@ -660,16 +648,71 @@
         swiping = false;
         card.style.transition = 'transform 200ms ease-out';
         var dx = currentX - startX;
-        if (dx < -60) {
-          // Keep open to show action
-          card.style.transform = 'translateX(-80px)';
-        } else {
-          card.style.transform = 'translateX(0)';
-        }
+        card.style.transform = dx < -60 ? 'translateX(-80px)' : 'translateX(0)';
       }, { passive: true });
 
-      sessionListEl.appendChild(wrapper);
+      return wrapper;
+    }
+
+    // Group sessions by cwd
+    var groups = {};
+    var groupOrder = [];
+    visibleSessions.forEach(function(s) {
+      var key = s.cwd || 'Other';
+      if (!groups[key]) { groups[key] = []; groupOrder.push(key); }
+      groups[key].push(s);
     });
+
+    // Retrieve collapsed state
+    var collapsedGroups = {};
+    try { collapsedGroups = JSON.parse(localStorage.getItem('collapsed_groups') || '{}'); } catch(e) {}
+
+    // If only one group, render flat (no group headers)
+    if (groupOrder.length <= 1) {
+      visibleSessions.forEach(function(s) {
+        sessionListEl.appendChild(buildCardWrapper(s));
+      });
+    } else {
+      // Render grouped
+      groupOrder.forEach(function(groupPath) {
+        var groupSessions = groups[groupPath];
+        var groupEl = document.createElement('div');
+        groupEl.className = 'session-group' + (collapsedGroups[groupPath] ? ' collapsed' : '');
+
+        var header = document.createElement('div');
+        header.className = 'session-group-header';
+        var chevron = document.createElement('span');
+        chevron.className = 'session-group-chevron';
+        chevron.textContent = '\u25BC';
+        var pathEl = document.createElement('span');
+        pathEl.className = 'session-group-path';
+        // Shorten home dir
+        var displayPath = groupPath.replace(/^\/home\/[^/]+\//, '~/');
+        pathEl.textContent = displayPath;
+        var countEl = document.createElement('span');
+        countEl.className = 'session-group-count';
+        countEl.textContent = '(' + groupSessions.length + ')';
+        header.appendChild(chevron);
+        header.appendChild(pathEl);
+        header.appendChild(countEl);
+
+        header.addEventListener('click', function() {
+          var isCollapsed = groupEl.classList.toggle('collapsed');
+          collapsedGroups[groupPath] = isCollapsed;
+          try { localStorage.setItem('collapsed_groups', JSON.stringify(collapsedGroups)); } catch(e) {}
+        });
+
+        groupEl.appendChild(header);
+
+        var itemsEl = document.createElement('div');
+        itemsEl.className = 'session-group-items';
+        groupSessions.forEach(function(s) {
+          itemsEl.appendChild(buildCardWrapper(s));
+        });
+        groupEl.appendChild(itemsEl);
+        sessionListEl.appendChild(groupEl);
+      });
+    }
 
     // On desktop, highlight the active session card after re-render
     if (isDesktop() && currentSession) {
@@ -1997,6 +2040,22 @@
   // ========== Show Hidden Toggle ==========
   showHiddenToggle.addEventListener('click', function() {
     showHiddenToggle._showHidden = !showHiddenToggle._showHidden;
+    loadSessions();
+  });
+
+  // ========== Search & Filter ==========
+  var searchDebounce = null;
+  searchInput.addEventListener('input', function() {
+    clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(function() { loadSessions(); }, 150);
+  });
+  searchFilters.addEventListener('click', function(e) {
+    var chip = e.target.closest('.filter-chip');
+    if (!chip) return;
+    var chips = searchFilters.querySelectorAll('.filter-chip');
+    for (var i = 0; i < chips.length; i++) chips[i].classList.remove('active');
+    chip.classList.add('active');
+    activeStatusFilter = chip.getAttribute('data-filter');
     loadSessions();
   });
 
