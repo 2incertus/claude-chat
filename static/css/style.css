@@ -154,16 +154,14 @@ body {
   font-size: 0.68rem;
   color: var(--text-muted);
   background: var(--surface2);
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-medium);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  margin-left: auto;
 }
-.bottom-info {
-  display: flex;
-  justify-content: center;
-  padding: 2px 0;
-}
+/* cost badge sits inline in special-keys row */
 .status-dot {
   width: 10px;
   height: 10px;
@@ -2537,4 +2535,16 @@ body.font-large { font-size: 18px; }
 }
 @media (max-width: 767px) {
   #starFilterBtn { display: none !important; }
+  .msg-star-btn { display: none !important; }
+  #screenChat .header .refresh-btn,
+  #screenChat .header .bell-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 2px;
+  }
+  #screenChat .header .refresh-btn svg,
+  #screenChat .header .bell-btn svg {
+    width: 13px;
+    height: 13px;
+  }
 }
