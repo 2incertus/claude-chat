@@ -231,13 +231,14 @@ def parse_messages(output: str) -> list[dict]:
             if current and current["role"] == "tool":
                 if result_text:
                     current.setdefault("tool_results", []).append(result_text)
+                # Stay in tool mode so subsequent lines don't leak into content
             else:
                 for msg in reversed(messages):
                     if msg["role"] == "tool":
                         if result_text:
                             msg.setdefault("tool_results", []).append(result_text)
                         break
-            in_tool = False
+                in_tool = False
             continue
 
         # ── user message
@@ -450,8 +451,7 @@ def manifest():
         "background_color": "#0A0A0A",
         "theme_color": "#0A0A0A",
         "icons": [
-            {"src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
-            {"src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+            {"src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"},
         ],
     })
 

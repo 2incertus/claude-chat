@@ -13,6 +13,12 @@
   var sessionListTimer = null;
   var pendingMessages = []; // optimistic messages awaiting server confirmation
   var sessionScrollPositions = {};
+  var longPressTimer = null;
+
+  // Tab title / browser notification state
+  var workingSessionCount = 0;
+  var defaultTitle = 'Claude Voice Chat';
+  var hasUnreadMessages = false;
 
   // Voice state
   var NativeSR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -93,9 +99,48 @@
     setTimeout(function() { uploadToast.style.display = 'none'; }, 1500);
   }
 
+  // ========== Desktop Detection ==========
+  function isDesktop() {
+    return window.innerWidth >= 768;
+  }
+
   // ========== Navigation ==========
   // Per-session draft storage
   var sessionDrafts = {};
+
+  function showDesktopEmptyState() {
+    // Clear chat feed and show empty state
+    while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
+    var empty = document.createElement('div');
+    empty.className = 'desktop-empty-state';
+    var icon = document.createElement('div');
+    icon.className = 'desktop-empty-state-icon';
+    icon.innerHTML = '&#9671;';
+    var label = document.createElement('div');
+    label.textContent = 'Select a session to view';
+    empty.appendChild(icon);
+    empty.appendChild(label);
+    chatFeed.appendChild(empty);
+
+    // Hide input area and typing indicator on desktop when no session
+    var inputArea = document.getElementById('inputArea');
+    if (inputArea) inputArea.style.display = 'none';
+    typingIndicator.classList.remove('visible');
+    chatTitle.textContent = 'Session';
+    chatStatus.className = 'status-dot';
+  }
+
+  function updateActiveCard() {
+    var cards = sessionListEl.querySelectorAll('.session-card');
+    for (var i = 0; i < cards.length; i++) {
+      var cardName = cards[i].getAttribute('data-name');
+      if (cardName === currentSession) {
+        cards[i].classList.add('active');
+      } else {
+        cards[i].classList.remove('active');
+      }
+    }
+  }
 
   function showSessionList() {
     // Save current draft before leaving
@@ -113,11 +158,21 @@
     idleCount = 0;
     lastMessageCount = 0;
     pendingMessages = [];
+    currentSessionStatus = '';
+    hasUnreadMessages = false;
     stopPolling();
     stopTTS();
     hidePreview();
-    screenList.className = 'screen';
-    screenChat.className = 'screen hidden-right';
+
+    if (isDesktop()) {
+      // On desktop, keep both panels visible
+      screenList.className = 'screen';
+      screenChat.className = 'screen';
+      showDesktopEmptyState();
+    } else {
+      screenList.className = 'screen';
+      screenChat.className = 'screen hidden-right';
+    }
     loadSessions();
     startSessionListPolling();
   }
@@ -133,6 +188,10 @@
     textInput.value = sessionDrafts[name] || '';
     micLabel.textContent = '';
 
+    // Show input area (may have been hidden by desktop empty state)
+    var inputArea = document.getElementById('inputArea');
+    if (inputArea) inputArea.style.display = '';
+
     // clear feed and show loading state
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
     var loadingEl = document.createElement('div');
@@ -147,8 +206,15 @@
     hidePreview();
     updateBellIcon();
 
-    screenList.className = 'screen hidden-left';
-    screenChat.className = 'screen';
+    if (isDesktop()) {
+      // On desktop, keep session list visible
+      screenList.className = 'screen';
+      screenChat.className = 'screen';
+      updateActiveCard();
+    } else {
+      screenList.className = 'screen hidden-left';
+      screenChat.className = 'screen';
+    }
 
     loadSession(name);
     startPolling();
@@ -186,7 +252,33 @@
       });
   }
 
+  function getPinnedSessions() {
+    try { return JSON.parse(localStorage.getItem('pinned_sessions') || '[]'); } catch(e) { return []; }
+  }
+
+  function setPinnedSessions(arr) {
+    localStorage.setItem('pinned_sessions', JSON.stringify(arr));
+  }
+
+  function togglePin(name) {
+    var pinned = getPinnedSessions();
+    var idx = pinned.indexOf(name);
+    if (idx >= 0) {
+      pinned.splice(idx, 1);
+      showActionToast('Unpinned', 'info');
+    } else {
+      pinned.push(name);
+      showActionToast('Pinned to top', 'success');
+    }
+    setPinnedSessions(pinned);
+    loadSessions();
+  }
+
   function renderSessionList(sessions) {
+    // Remove old batch action button
+    var oldBatch = sessionListEl.parentNode.querySelector('.batch-action-btn');
+    if (oldBatch) oldBatch.remove();
+
     // Remove old wrappers and bare cards
     var oldWrappers = sessionListEl.querySelectorAll('.session-card-wrapper');
     for (var i = 0; i < oldWrappers.length; i++) {
@@ -206,16 +298,79 @@
     });
     var hiddenCount = sessions.length - sessions.filter(function(s) { return hidden.indexOf(s.name) === -1; }).length;
 
-    sessionCountEl.textContent = String(visibleSessions.length);
+    // Count active vs total for badge
+    var activeCount = visibleSessions.filter(function(s) { return s.state !== 'dead'; }).length;
+    var deadCount = visibleSessions.length - activeCount;
+    var anyWorking = visibleSessions.some(function(s) { return s.status === 'working'; });
+
+    // Track working count for tab title badge
+    workingSessionCount = visibleSessions.filter(function(s) { return s.status === 'working'; }).length;
+    updateTabTitle();
+
+    if (deadCount > 0) {
+      sessionCountEl.textContent = activeCount + '/' + visibleSessions.length;
+    } else {
+      sessionCountEl.textContent = String(visibleSessions.length);
+    }
+    // Working dot in badge
+    var existingDot = sessionCountEl.querySelector('.badge-dot');
+    if (anyWorking) {
+      sessionCountEl.classList.add('has-working');
+      if (!existingDot) {
+        var dot = document.createElement('span');
+        dot.className = 'badge-dot';
+        sessionCountEl.appendChild(dot);
+      }
+    } else {
+      sessionCountEl.classList.remove('has-working');
+      if (existingDot) existingDot.remove();
+    }
 
     if (visibleSessions.length === 0) {
       emptyStateEl.style.display = '';
       showHiddenToggle.style.display = hiddenCount > 0 ? '' : 'none';
+      // Remove batch dismiss btn if present
+      var oldBatch = sessionListEl.parentNode.querySelector('.batch-action-btn');
+      if (oldBatch) oldBatch.remove();
       return;
     }
     emptyStateEl.style.display = 'none';
     showHiddenToggle.style.display = hiddenCount > 0 ? '' : 'none';
     showHiddenToggle.textContent = showHidden ? 'Hide hidden sessions' : 'Show ' + hiddenCount + ' hidden';
+
+    // Sort: pinned first, then by original order
+    var pinned = getPinnedSessions();
+    visibleSessions.sort(function(a, b) {
+      var aPin = pinned.indexOf(a.name) >= 0 ? 0 : 1;
+      var bPin = pinned.indexOf(b.name) >= 0 ? 0 : 1;
+      return aPin - bPin;
+    });
+
+    // Batch dismiss button for dead sessions
+    var oldBatchBtn = sessionListEl.parentNode.querySelector('.batch-action-btn');
+    if (oldBatchBtn) oldBatchBtn.remove();
+    if (deadCount > 0) {
+      var batchBtn = document.createElement('button');
+      batchBtn.className = 'batch-action-btn';
+      batchBtn.textContent = 'Dismiss all exited (' + deadCount + ')';
+      batchBtn.addEventListener('click', function() {
+        batchBtn.classList.add('loading');
+        batchBtn.innerHTML = '<span class="btn-spinner"></span> Dismissing...';
+        var deadNames = visibleSessions.filter(function(s) { return s.state === 'dead'; }).map(function(s) { return s.name; });
+        var promises = deadNames.map(function(n) {
+          return fetch('/api/sessions/' + encodeURIComponent(n), { method: 'DELETE' });
+        });
+        Promise.all(promises).then(function() {
+          showActionToast('Dismissed ' + deadNames.length + ' session' + (deadNames.length > 1 ? 's' : ''), 'success');
+          loadSessions();
+        }).catch(function() {
+          showActionToast('Some dismissals failed', 'error');
+          loadSessions();
+        });
+      });
+      // Insert before session list
+      sessionListEl.parentNode.insertBefore(batchBtn, sessionListEl);
+    }
 
     visibleSessions.forEach(function(s) {
       var wrapper = document.createElement('div');
@@ -238,9 +393,18 @@
       wrapper.appendChild(actions);
 
       // Card
+      var isPinned = pinned.indexOf(s.name) >= 0;
       var card = document.createElement('div');
-      card.className = 'session-card' + (s.state === 'dead' ? ' dead' : '');
+      card.className = 'session-card' + (s.state === 'dead' ? ' dead' : '') + (isPinned ? ' pinned' : '');
       card.setAttribute('data-name', s.name);
+
+      // Pin indicator
+      if (isPinned) {
+        var pinIcon = document.createElement('span');
+        pinIcon.className = 'session-card-pin';
+        pinIcon.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>';
+        card.appendChild(pinIcon);
+      }
 
       var top = document.createElement('div');
       top.className = 'session-card-top';
@@ -297,9 +461,10 @@
         card.appendChild(respawnBtn);
       }
 
-      // Click to open (only active sessions)
+      // Click to open (only active sessions), skip if long-press triggered
       if (s.state === 'active') {
         card.addEventListener('click', function() {
+          if (longPressTriggered) return;
           // Immediate visual feedback
           card.style.opacity = '0.5';
           card.style.transform = 'scale(0.97)';
@@ -309,23 +474,40 @@
 
       wrapper.appendChild(card);
 
-      // Swipe gesture
+      // Swipe gesture + long-press to pin
       var startX = 0, currentX = 0, swiping = false;
+      var cardLongPress = null;
+      var longPressTriggered = false;
+      var startY = 0;
       card.addEventListener('touchstart', function(e) {
         startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
         currentX = startX;
         swiping = true;
+        longPressTriggered = false;
         card.style.transition = 'none';
+        // Long-press timer
+        cardLongPress = setTimeout(function() {
+          longPressTriggered = true;
+          togglePin(s.name);
+        }, 500);
       }, { passive: true });
       card.addEventListener('touchmove', function(e) {
         if (!swiping) return;
         currentX = e.touches[0].clientX;
         var dx = currentX - startX;
+        var dy = Math.abs(e.touches[0].clientY - startY);
+        // Cancel long-press if finger moves
+        if ((Math.abs(dx) > 10 || dy > 10) && cardLongPress) {
+          clearTimeout(cardLongPress);
+          cardLongPress = null;
+        }
         if (dx < 0) { // swipe left only
           card.style.transform = 'translateX(' + Math.max(dx, -100) + 'px)';
         }
       }, { passive: true });
       card.addEventListener('touchend', function() {
+        if (cardLongPress) { clearTimeout(cardLongPress); cardLongPress = null; }
         if (!swiping) return;
         swiping = false;
         card.style.transition = 'transform 200ms ease-out';
@@ -340,6 +522,11 @@
 
       sessionListEl.appendChild(wrapper);
     });
+
+    // On desktop, highlight the active session card after re-render
+    if (isDesktop() && currentSession) {
+      updateActiveCard();
+    }
   }
 
   // Pull-to-refresh
@@ -399,7 +586,10 @@
       });
   }
 
+  var currentSessionStatus = '';
   function updateStatusDot(status) {
+    var prevSessionStatus = currentSessionStatus;
+    currentSessionStatus = status;
     if (status === 'working') {
       chatStatus.className = 'status-dot working';
       typingIndicator.classList.add('visible');
@@ -407,18 +597,41 @@
       chatStatus.className = 'status-dot';
       typingIndicator.classList.remove('visible');
     }
+    // Update working count estimate for tab title
+    if (prevSessionStatus === 'working' && status !== 'working') {
+      workingSessionCount = Math.max(0, workingSessionCount - 1);
+      updateTabTitle();
+    } else if (prevSessionStatus !== 'working' && status === 'working') {
+      workingSessionCount = Math.max(1, workingSessionCount + 1);
+      updateTabTitle();
+    }
   }
 
   function renderMessages(messages) {
     // Clear feed
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
 
-    messages.forEach(function(m, i) {
-      appendMessage(m, false, messages, i);
-    });
+    // Group consecutive tool calls into collapsible activity blocks
+    var i = 0;
+    while (i < messages.length) {
+      var m = messages[i];
+      if (m.role === 'tool') {
+        // Collect consecutive tool messages
+        var toolGroup = [];
+        while (i < messages.length && messages[i].role === 'tool') {
+          toolGroup.push(messages[i]);
+          i++;
+        }
+        appendToolGroup(toolGroup);
+      } else {
+        appendMessage(m, false, messages, i);
+        i++;
+      }
+    }
 
     // Re-append pending messages not yet in server data
     var now = Date.now();
+    var hadConfirmed = false;
     function normalize(s) { return (s || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
     pendingMessages = pendingMessages.filter(function(pm) {
       if (now - pm.ts > 30000) return false; // expire after 30s
@@ -437,8 +650,13 @@
         }
         return false;
       });
+      if (found && pm._pending) hadConfirmed = true;
       return !found;
     });
+    // Show brief "Sent" confirmation when a pending message was just confirmed
+    if (hadConfirmed) {
+      showSentConfirmation();
+    }
     pendingMessages.forEach(function(pm) {
       appendMessage(pm, false, null, -1);
     });
@@ -571,9 +789,93 @@
     return frag;
   }
 
+  function appendToolGroup(tools) {
+    // Separate Agent/Skill calls from regular tools
+    var agents = [];
+    var regular = [];
+    for (var t = 0; t < tools.length; t++) {
+      if (tools[t].tool === 'Agent' || tools[t].tool === 'Skill') {
+        agents.push(tools[t]);
+      } else {
+        regular.push(tools[t]);
+      }
+    }
+
+    // Render Agent/Skill calls as individual collapsible cards
+    for (var a = 0; a < agents.length; a++) {
+      appendMessage(agents[a], false, null, -1);
+    }
+
+    // Group regular tools into a single collapsible activity block
+    if (regular.length === 0) return;
+
+    var block = document.createElement('div');
+    block.className = 'tool-activity-block';
+
+    var header = document.createElement('div');
+    header.className = 'tool-activity-header';
+
+    // Build summary: unique tool names
+    var toolNames = {};
+    for (var r = 0; r < regular.length; r++) {
+      var tn = regular[r].tool || 'tool';
+      toolNames[tn] = (toolNames[tn] || 0) + 1;
+    }
+    var parts = [];
+    for (var name in toolNames) {
+      parts.push(name + (toolNames[name] > 1 ? ' \u00d7' + toolNames[name] : ''));
+    }
+
+    var icon = document.createElement('span');
+    icon.className = 'tool-activity-icon';
+    icon.textContent = '\u2699';
+
+    var summary = document.createElement('span');
+    summary.className = 'tool-activity-summary';
+    summary.textContent = parts.join(', ');
+
+    var count = document.createElement('span');
+    count.className = 'tool-activity-count';
+    count.textContent = regular.length + (regular.length === 1 ? ' action' : ' actions');
+
+    var toggle = document.createElement('span');
+    toggle.className = 'tool-activity-toggle collapsed';
+    toggle.textContent = '\u25BC';
+
+    header.appendChild(icon);
+    header.appendChild(summary);
+    header.appendChild(count);
+    header.appendChild(toggle);
+
+    var body = document.createElement('div');
+    body.className = 'tool-activity-body collapsed';
+
+    for (var r = 0; r < regular.length; r++) {
+      var item = document.createElement('div');
+      item.className = 'tool-activity-item';
+      var toolContent = (regular[r].content || '').split('\\n')[0].split('\n')[0].trim();
+      var toolSummary = toolContent.length > 70 ? toolContent.substring(0, 70) + '\u2026' : toolContent;
+      item.textContent = (regular[r].tool || 'tool') + '(' + toolSummary + ')';
+      body.appendChild(item);
+    }
+
+    header.addEventListener('click', function() {
+      body.classList.toggle('collapsed');
+      toggle.classList.toggle('collapsed');
+    });
+
+    block.appendChild(header);
+    block.appendChild(body);
+    block.style.animation = 'none';
+    chatFeed.appendChild(block);
+  }
+
   function appendMessage(m, animate, allMsgs, msgIdx) {
     var el;
     if (m.role === 'user') {
+      // Wrap user messages in a container to allow status indicator below
+      var wrapper = document.createElement('div');
+      wrapper.className = 'msg-user-wrapper';
       el = document.createElement('div');
       el.className = 'msg msg-user';
       var userContent = m.content || m.text || '';
@@ -588,6 +890,16 @@
         if (cmdArgs) el.appendChild(document.createTextNode(cmdArgs));
       } else {
         el.textContent = userContent;
+      }
+      if (m._pending) {
+        var statusEl = document.createElement('div');
+        statusEl.className = 'msg-status msg-status-pending';
+        statusEl.textContent = 'Sending\u2026';
+        wrapper.appendChild(el);
+        wrapper.appendChild(statusEl);
+        if (!animate) wrapper.style.animation = 'none';
+        chatFeed.appendChild(wrapper);
+        return;
       }
       if (!animate) el.style.animation = 'none';
     } else if (m.role === 'assistant') {
@@ -693,8 +1005,63 @@
         if (!animate) el.style.animation = 'none';
       }
     } else if (m.role === 'tool') {
-      // Hide tool calls -- they're noise in a chat view
-      return;
+      if (m.tool === 'Agent' || m.tool === 'Skill') {
+        // Agent/Skill calls get collapsible cards
+        el = document.createElement('div');
+        el.className = 'agent-result-card';
+        var agentHeader = document.createElement('div');
+        agentHeader.className = 'agent-result-header';
+        var agentIcon = document.createElement('span');
+        agentIcon.className = 'agent-result-icon';
+        agentIcon.textContent = '\u25C7';
+        var agentLabel = document.createElement('span');
+        agentLabel.className = 'agent-result-label';
+        agentLabel.textContent = m.tool || 'Agent';
+        var agentDesc = document.createElement('span');
+        agentDesc.className = 'agent-result-desc';
+        var agentContent = m.content || '';
+        agentDesc.textContent = agentContent.length > 80 ? agentContent.substring(0, 80) + '...' : agentContent;
+        agentDesc.title = agentContent.length > 80 ? agentContent : '';
+        var agentToggle = document.createElement('span');
+        agentToggle.className = 'agent-result-toggle collapsed';
+        agentToggle.textContent = '\u25BC';
+        agentHeader.appendChild(agentIcon);
+        agentHeader.appendChild(agentLabel);
+        agentHeader.appendChild(agentDesc);
+        agentHeader.appendChild(agentToggle);
+        var agentBody = document.createElement('div');
+        agentBody.className = 'agent-result-body collapsed';
+        var agentText = document.createElement('div');
+        agentText.className = 'msg-assistant-text';
+        agentText.appendChild(renderMarkdown(agentContent));
+        agentBody.appendChild(agentText);
+        if (m.tool_results) {
+          var toolResults = document.createElement('div');
+          toolResults.className = 'agent-tool-results';
+          var trLabel = document.createElement('div');
+          trLabel.className = 'agent-tool-results-label';
+          trLabel.textContent = 'Tool Results';
+          toolResults.appendChild(trLabel);
+          var trContent = document.createElement('pre');
+          trContent.className = 'code-block';
+          trContent.style.margin = '4px 0 0';
+          trContent.style.fontSize = '12px';
+          var trText = typeof m.tool_results === 'string' ? m.tool_results : JSON.stringify(m.tool_results, null, 2);
+          trContent.textContent = trText;
+          toolResults.appendChild(trContent);
+          agentBody.appendChild(toolResults);
+        }
+        agentHeader.addEventListener('click', function() {
+          agentBody.classList.toggle('collapsed');
+          agentToggle.classList.toggle('collapsed');
+        });
+        el.appendChild(agentHeader);
+        el.appendChild(agentBody);
+        if (!animate) el.style.animation = 'none';
+      } else {
+        // Regular tool calls handled by appendToolGroup, skip here
+        return;
+      }
     } else {
       return;
     }
@@ -740,9 +1107,12 @@
           if (newCount > lastMessageCount) {
             if (isUserNearBottom) {
               scrollToBottom(false);
+              hasUnreadMessages = false;
             } else {
               newMsgPill.classList.add('visible');
+              hasUnreadMessages = true;
             }
+            updateTabTitle();
           }
           lastMessageCount = newCount;
           idleCount = 0;
@@ -815,12 +1185,18 @@
     checkScrollPosition();
     if (isUserNearBottom) {
       newMsgPill.classList.remove('visible');
+      if (hasUnreadMessages) {
+        hasUnreadMessages = false;
+        updateTabTitle();
+      }
     }
   }, { passive: true });
 
   newMsgPill.addEventListener('click', function() {
     chatFeed.scrollTop = chatFeed.scrollHeight;
     newMsgPill.classList.remove('visible');
+    hasUnreadMessages = false;
+    updateTabTitle();
   });
 
   // ========== TTS ==========
@@ -902,7 +1278,7 @@
   function sendMessage(text) {
     if (!currentSession) return;
     // optimistically add user message and track it
-    var msg = { role: 'user', content: text, ts: Date.now() };
+    var msg = { role: 'user', content: text, ts: Date.now(), _pending: true };
     pendingMessages.push(msg);
     appendMessage(msg, true, null, -1);
     scrollToBottom(true);
@@ -931,6 +1307,22 @@
   function findCardWrapper(name) {
     var card = sessionListEl.querySelector('.session-card[data-name="' + name + '"]');
     return card ? card.closest('.session-card-wrapper') : null;
+  }
+
+  function showSentConfirmation() {
+    var existing = document.querySelector('.msg-sent-toast');
+    if (existing) existing.remove();
+    var toast = document.createElement('div');
+    toast.className = 'msg-sent-toast';
+    toast.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Sent';
+    document.body.appendChild(toast);
+    requestAnimationFrame(function() {
+      requestAnimationFrame(function() { toast.classList.add('visible'); });
+    });
+    setTimeout(function() {
+      toast.classList.remove('visible');
+      setTimeout(function() { if (toast.parentNode) toast.remove(); }, 300);
+    }, 2000);
   }
 
   function showActionToast(message, type) {
@@ -1093,6 +1485,77 @@
     fileInput.value = '';
   });
 
+  // ========== Tab Title Badge ==========
+  function updateTabTitle() {
+    var title = defaultTitle;
+    if (workingSessionCount > 0) {
+      title = '(' + workingSessionCount + ') ' + defaultTitle;
+    } else if (hasUnreadMessages) {
+      title = '\u25CF ' + defaultTitle;
+    }
+    document.title = title;
+  }
+
+  // ========== Browser Push Notifications ==========
+  function requestBrowserNotifPermission() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(function() {});
+    }
+  }
+
+  function showBrowserNotification(sessionName, sessionTitle) {
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+
+    var title = (sessionTitle || sessionName) + ' finished working';
+    var notif = new Notification(title, {
+      body: 'Session is now idle',
+      icon: '/static/icon.svg',
+      tag: 'claude-chat-' + sessionName
+    });
+    notif.onclick = function() {
+      window.focus();
+      notif.close();
+      showSessionView(sessionName);
+    };
+  }
+
+  // ========== Notification Sound ==========
+  function playNotificationChime() {
+    var s = getSettings();
+    if (!s.notifSound) return;
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var gain = ctx.createGain();
+      gain.gain.value = 0.1;
+      gain.connect(ctx.destination);
+
+      // First tone: 800Hz for 100ms
+      var osc1 = ctx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.value = 800;
+      osc1.connect(gain);
+      osc1.start(ctx.currentTime);
+      osc1.stop(ctx.currentTime + 0.1);
+
+      // Second tone: 1000Hz for 100ms after first
+      var osc2 = ctx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.value = 1000;
+      osc2.connect(gain);
+      osc2.start(ctx.currentTime + 0.1);
+      osc2.stop(ctx.currentTime + 0.2);
+
+      // Clean up after playback
+      osc2.onended = function() {
+        gain.disconnect();
+        ctx.close();
+      };
+    } catch(e) {}
+  }
+
   // ========== ntfy Notifications ==========
   var previousStatus = {};
   var lastNtfyTime = {};
@@ -1128,6 +1591,9 @@
     var now = !isNtfyEnabled(currentSession);
     setNtfyEnabled(currentSession, now);
     updateBellIcon();
+    if (now) {
+      requestBrowserNotifPermission();
+    }
   });
 
   function sendNtfy(title, body) {
@@ -1179,6 +1645,12 @@
       }
       var title = 'Claude finished in ' + (chatTitle.textContent || sessionName);
       sendNtfy(title, body);
+
+      // Browser push notification (only when tab is hidden)
+      if (statusTransition) {
+        showBrowserNotification(sessionName, chatTitle.textContent || sessionName);
+        playNotificationChime();
+      }
     }
   }
 
@@ -1568,6 +2040,9 @@
 
     var ntfyRow = createSettingsRow('Default Notifications', 'toggle', !!s.defaultNtfy, null, function(v) { saveSetting('defaultNtfy', v); });
     settingsPanel.appendChild(ntfyRow);
+
+    var soundRow = createSettingsRow('Notification Sound', 'toggle', !!s.notifSound, null, function(v) { saveSetting('notifSound', v); });
+    settingsPanel.appendChild(soundRow);
   }
 
   function createSettingsRow(label, type, currentValue, options, onChange) {
@@ -1605,10 +2080,137 @@
   gearBtn.addEventListener('click', openSettings);
   settingsBackdrop.addEventListener('click', closeSettings);
 
+  // ========== Keyboard Navigation ==========
+  document.addEventListener('keydown', function(e) {
+    var tag = (e.target.tagName || '').toLowerCase();
+    var isInput = (tag === 'input' || tag === 'textarea' || tag === 'select');
+    var settingsOpen = settingsPanel.classList.contains('visible');
+    var newSessionOpen = newSessionPanel.classList.contains('visible');
+    var paletteOpen = cmdPalette.classList.contains('visible');
+
+    // Escape: close settings/new-session/command-palette, or go back to session list
+    if (e.key === 'Escape') {
+      if (settingsOpen) {
+        closeSettings();
+        e.preventDefault();
+        return;
+      }
+      if (newSessionOpen) {
+        closeNewSession();
+        e.preventDefault();
+        return;
+      }
+      if (paletteOpen) {
+        hidePalette();
+        e.preventDefault();
+        return;
+      }
+      // If editing title, let the title handler deal with it
+      if (isEditingTitle) return;
+      // If text input is focused, blur it first
+      if (isInput) {
+        e.target.blur();
+        e.preventDefault();
+        return;
+      }
+      // Go back to session list (on mobile) or deselect on desktop
+      if (currentSession) {
+        showSessionList();
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Don't handle other shortcuts when typing in inputs
+    if (isInput) return;
+
+    // Cmd/Ctrl + K: focus text input
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      e.preventDefault();
+      if (currentSession) {
+        textInput.focus();
+      }
+      return;
+    }
+
+    // Up/Down arrow: navigate session cards when session list is visible
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      var cards = sessionListEl.querySelectorAll('.session-card');
+      if (cards.length === 0) return;
+
+      // Find currently focused card
+      var focusedIdx = -1;
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i].classList.contains('kb-focused')) {
+          focusedIdx = i;
+          break;
+        }
+      }
+
+      // Remove old focus
+      if (focusedIdx >= 0) {
+        cards[focusedIdx].classList.remove('kb-focused');
+      }
+
+      // Calculate new index
+      var newIdx;
+      if (e.key === 'ArrowDown') {
+        newIdx = (focusedIdx < 0) ? 0 : Math.min(focusedIdx + 1, cards.length - 1);
+      } else {
+        newIdx = (focusedIdx < 0) ? cards.length - 1 : Math.max(focusedIdx - 1, 0);
+      }
+
+      cards[newIdx].classList.add('kb-focused');
+      cards[newIdx].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      e.preventDefault();
+      return;
+    }
+
+    // Enter: open focused session card
+    if (e.key === 'Enter') {
+      var focused = sessionListEl.querySelector('.session-card.kb-focused');
+      if (focused) {
+        var sessionName = focused.getAttribute('data-name');
+        if (sessionName) {
+          showSessionView(sessionName);
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+  });
+
   // ========== Init ==========
-  window.addEventListener('resize', updatePillPosition);
+  window.addEventListener('resize', function() {
+    updatePillPosition();
+    // Handle layout changes on resize (e.g. rotating tablet)
+    if (isDesktop()) {
+      // Ensure both panels visible on desktop
+      screenList.className = 'screen';
+      screenChat.className = 'screen';
+      if (!currentSession) {
+        showDesktopEmptyState();
+      }
+    } else {
+      // Restore mobile layout
+      if (currentSession) {
+        screenList.className = 'screen hidden-left';
+        screenChat.className = 'screen';
+      } else {
+        screenList.className = 'screen';
+        screenChat.className = 'screen hidden-right';
+      }
+    }
+  });
   loadSettings();
   loadSessions();
   startSessionListPolling();
+
+  // On desktop, show empty state on initial load
+  if (isDesktop()) {
+    screenList.className = 'screen';
+    screenChat.className = 'screen';
+    showDesktopEmptyState();
+  }
 
 })();
