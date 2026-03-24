@@ -4147,4 +4147,191 @@
   // Auth check, then init
   checkAuthAndInit();
 
+  // ========== Log Monitor ==========
+  var screenMonitor = document.getElementById('screenMonitor');
+  var monitorBtn = document.getElementById('monitorBtn');
+  var monitorBackBtn = document.getElementById('monitorBackBtn');
+  var analyzeBtn = document.getElementById('analyzeBtn');
+  var monitorRefreshTimer = null;
+  var currentLogCategory = 'all';
+
+  function showMonitor() {
+    document.getElementById('screenList').classList.add('hidden-right');
+    document.getElementById('screenChat').classList.add('hidden-right');
+    if (screenMonitor) screenMonitor.classList.remove('hidden-right');
+    loadMonitorData();
+    if (monitorRefreshTimer) clearInterval(monitorRefreshTimer);
+    monitorRefreshTimer = setInterval(loadMonitorData, 30000);
+    AppLog.log('frontend', 'monitor_open', 'INFO');
+  }
+
+  function hideMonitor() {
+    if (screenMonitor) screenMonitor.classList.add('hidden-right');
+    document.getElementById('screenList').classList.remove('hidden-right');
+    if (monitorRefreshTimer) {
+      clearInterval(monitorRefreshTimer);
+      monitorRefreshTimer = null;
+    }
+  }
+
+  function loadMonitorData() {
+    loadMonitorStats();
+    loadInsights();
+    loadLogStream();
+  }
+
+  function loadMonitorStats() {
+    authFetch('/api/logs/stats').then(function(r) { return r.json(); }).then(function(data) {
+      var el;
+      el = document.getElementById('statEntriesMin');
+      if (el) el.textContent = data.entries_per_min || '0';
+      el = document.getElementById('statErrors');
+      if (el) el.textContent = data.errors_5min || '0';
+      el = document.getElementById('statWarnings');
+      if (el) el.textContent = data.warnings_5min || '0';
+      var la = data.last_analysis;
+      el = document.getElementById('statLastAnalysis');
+      if (el) {
+        if (la) {
+          var ago = Math.round((Date.now() - new Date(la).getTime()) / 60000);
+          el.textContent = ago < 1 ? 'just now' : ago + 'm ago';
+        } else {
+          el.textContent = 'never';
+        }
+      }
+    }).catch(function() {});
+  }
+
+  function loadInsights() {
+    authFetch('/api/insights?limit=10').then(function(r) { return r.json(); }).then(function(data) {
+      var list = document.getElementById('insightsList');
+      if (!list) return;
+      var insights = data.insights || [];
+      var countEl = document.getElementById('insightCount');
+      if (countEl) countEl.textContent = insights.length || '';
+      if (!insights.length) {
+        list.innerHTML = '<div class="empty-state" style="padding:20px;font-size:0.85rem;">No insights yet. Click "Analyze" to run analysis.</div>';
+        return;
+      }
+      list.innerHTML = insights.map(function(ins) {
+        var issues = ins.issues || [];
+        return issues.map(function(issue) {
+          var sev = issue.severity || 'info';
+          return '<div class="insight-card severity-' + sev + '" data-insight-id="' + ins.id + '">' +
+            '<div class="insight-header">' +
+              '<span class="insight-title"><span class="insight-severity ' + sev + '">' + sev + '</span>' +
+              escHtml(issue.title || 'Untitled') + '</span>' +
+              '<span class="insight-time">' + formatInsightTime(ins.created_at) + '</span>' +
+            '</div>' +
+            '<div class="insight-body">' +
+              '<p>' + escHtml(issue.description || '') + '</p>' +
+              (issue.recommendation ? '<div class="insight-recommendation">' + escHtml(issue.recommendation) + '</div>' : '') +
+              '<button class="insight-dismiss" data-dismiss-id="' + ins.id + '">Dismiss</button>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      }).join('');
+
+      list.querySelectorAll('.insight-card').forEach(function(card) {
+        card.addEventListener('click', function() { card.classList.toggle('expanded'); });
+      });
+      list.querySelectorAll('.insight-dismiss').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          var id = btn.getAttribute('data-dismiss-id');
+          authFetch('/api/insights/' + id + '/dismiss', { method: 'PUT' }).then(function() {
+            loadInsights();
+          });
+        });
+      });
+    }).catch(function() {});
+  }
+
+  function loadLogStream() {
+    var catParam = currentLogCategory === 'all' ? '' : '&category=' + currentLogCategory;
+    authFetch('/api/logs/recent?minutes=5' + catParam).then(function(r) { return r.json(); }).then(function(data) {
+      var stream = document.getElementById('logStream');
+      if (!stream) return;
+      var entries = data.entries || [];
+      if (!entries.length) {
+        stream.innerHTML = '<div style="padding:12px;color:var(--text-muted);font-size:0.8rem;">No log entries yet.</div>';
+        return;
+      }
+      stream.innerHTML = entries.slice(0, 100).map(function(e) {
+        var ts = e.ts ? e.ts.substring(11, 19) : '';
+        var level = e.level || 'INFO';
+        var summary = ts + ' [' + level + '] ' + (e.category || '') + '.' + (e.action || '');
+        if (e.session) summary += ' session=' + e.session;
+        if (e.duration_ms) summary += ' ' + e.duration_ms + 'ms';
+        return '<div class="log-entry level-' + level + '">' +
+          escHtml(summary) +
+          '<div class="log-entry-detail">' + escHtml(JSON.stringify(e, null, 2)) + '</div>' +
+        '</div>';
+      }).join('');
+
+      stream.querySelectorAll('.log-entry').forEach(function(entry) {
+        entry.addEventListener('click', function() {
+          var detail = entry.querySelector('.log-entry-detail');
+          if (detail) detail.style.display = detail.style.display === 'block' ? 'none' : 'block';
+        });
+      });
+    }).catch(function() {});
+  }
+
+  function formatInsightTime(isoStr) {
+    if (!isoStr) return '';
+    var ago = Math.round((Date.now() - new Date(isoStr).getTime()) / 60000);
+    if (ago < 1) return 'just now';
+    if (ago < 60) return ago + 'm ago';
+    if (ago < 1440) return Math.round(ago / 60) + 'h ago';
+    return Math.round(ago / 1440) + 'd ago';
+  }
+
+  // Monitor event listeners
+  if (monitorBtn) {
+    monitorBtn.addEventListener('click', showMonitor);
+  }
+  if (monitorBackBtn) {
+    monitorBackBtn.addEventListener('click', hideMonitor);
+  }
+  if (analyzeBtn) {
+    analyzeBtn.addEventListener('click', function() {
+      analyzeBtn.disabled = true;
+      analyzeBtn.textContent = 'Analyzing...';
+      analyzeBtn.classList.add('analyzing');
+      authFetch('/api/insights/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hours: 1 })
+      }).then(function(r) {
+        if (r.status === 429) {
+          return r.json().then(function(d) { throw new Error(d.detail); });
+        }
+        return r.json();
+      }).then(function() {
+        loadInsights();
+        loadMonitorStats();
+      }).catch(function(err) {
+        AppLog.log('frontend', 'analyze_error', 'ERROR', { error: err.message });
+      }).finally(function() {
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = 'Analyze';
+        analyzeBtn.classList.remove('analyzing');
+      });
+    });
+  }
+
+  // Log category filter
+  var logFilters = document.getElementById('logFilters');
+  if (logFilters) {
+    logFilters.addEventListener('click', function(e) {
+      var chip = e.target.closest('[data-logcat]');
+      if (!chip) return;
+      currentLogCategory = chip.getAttribute('data-logcat');
+      logFilters.querySelectorAll('.filter-chip').forEach(function(c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      loadLogStream();
+    });
+  }
+
 })();
