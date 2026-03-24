@@ -423,11 +423,19 @@ def run_tmux(*args: str) -> str:
     if args[0] not in ALLOWED_COMMANDS:
         raise RuntimeError(f"tmux command not allowed: {args[0]}")
     cmd = ["tmux", "-S", SOCKET] + list(args)
+    t0 = time.perf_counter()
     result = subprocess.run(cmd, capture_output=True, text=True)
+    elapsed = int((time.perf_counter() - t0) * 1000)
     if result.returncode != 0:
+        log("tmux", "tmux_error", level="ERROR",
+            command=args[0], args=list(args[1:4]),
+            returncode=result.returncode, stderr=result.stderr.strip()[:200],
+            duration_ms=elapsed)
         raise RuntimeError(
             f"tmux {args[0]} failed (rc={result.returncode}): {result.stderr.strip()}"
         )
+    log("tmux", "tmux_command", command=args[0], duration_ms=elapsed,
+        output_len=len(result.stdout))
     return result.stdout
 
 
