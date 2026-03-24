@@ -2224,6 +2224,7 @@
 
       if (data.has_changes && data.messages) {
         renderMessages(data.messages);
+        scrollToBottom(false);
         lastMessageCount = data.messages.length;
       }
       if (data.status) {
@@ -2318,16 +2319,14 @@
           contentHash = data.content_hash || '';
           var newCount = data.messages.length;
 
-          // Check if user is near bottom before updating
-          checkScrollPosition();
-
           // Re-render all messages (content_hash changed)
           stopTTS(); // prevent dangling ttsPlayingBtn reference
           renderMessages(data.messages);
+          scrollToBottom(false);
 
-          // If new messages arrived and user is near bottom, scroll
+          // If new messages arrived, scroll
           if (newCount > lastMessageCount) {
-            if (isUserNearBottom) {
+            if (true) {
               scrollToBottom(false);
               hasUnreadMessages = false;
             } else {
