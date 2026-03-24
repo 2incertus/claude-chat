@@ -277,6 +277,7 @@ async def _migrate_json_to_sqlite():
                 )
             await db.commit()
             os.rename(titles_file, titles_file + ".migrated")
+            log("system", "db_migrate", source="titles.json", records=len(raw))
         except Exception:
             pass
 
@@ -292,6 +293,7 @@ async def _migrate_json_to_sqlite():
                 )
             await db.commit()
             os.rename(history_file, history_file + ".migrated")
+            log("system", "db_migrate", source="history.json", records=len(entries))
         except Exception:
             pass
 
@@ -307,6 +309,7 @@ async def _migrate_json_to_sqlite():
                 )
             await db.commit()
             os.rename(settings_file, settings_file + ".migrated")
+            log("system", "db_migrate", source="settings.json", records=len(data))
         except Exception:
             pass
 
@@ -314,6 +317,10 @@ async def _migrate_json_to_sqlite():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client
+    _setup_logging()
+    log("system", "startup", auth_enabled=AUTH_ENABLED,
+        upload_dir=os.environ.get("UPLOAD_DIR", "/uploads"),
+        claude_data_dir=CLAUDE_DATA_DIR)
     http_client = httpx.AsyncClient(timeout=10.0)
     await init_db()
     await _migrate_json_to_sqlite()
@@ -321,7 +328,9 @@ async def lifespan(app: FastAPI):
     async with db.execute("SELECT session_name, title FROM titles") as cursor:
         async for row in cursor:
             title_cache[row["session_name"]] = row["title"]
+    log("system", "startup_complete", titles_loaded=len(title_cache))
     yield
+    log("system", "shutdown")
     if db:
         await db.close()
     await http_client.aclose()
