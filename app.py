@@ -36,6 +36,8 @@ TOKEN_TTL = 86400  # 24 hours
 TOKEN_MAX = 50
 CLAUDE_DATA_DIR = os.environ.get("CLAUDE_DATA_DIR", "/claude-data")
 LITELLM_URL = os.environ.get("LITELLM_URL", "http://host.docker.internal:4001/v1/chat/completions")
+LITELLM_KEY = os.environ.get("LITELLM_KEY", "")
+LITELLM_MODEL = os.environ.get("LITELLM_MODEL", "gpt-4.1-nano")
 
 SESSION_NAME_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_-]*$")
 
@@ -313,8 +315,9 @@ Respond with ONLY the JSON array, no other text."""
     try:
         resp = await http_client.post(
             LITELLM_URL,
+            headers={"Authorization": f"Bearer {LITELLM_KEY}"} if LITELLM_KEY else {},
             json={
-                "model": "glm-4.5-air",
+                "model": LITELLM_MODEL,
                 "max_tokens": 1000,
                 "messages": [{"role": "user", "content": prompt}],
             },
@@ -921,8 +924,9 @@ async def generate_title(session_name: str, messages: list[dict]) -> tuple[str, 
     try:
         resp = await http_client.post(
             LITELLM_URL,
+            headers={"Authorization": f"Bearer {LITELLM_KEY}"} if LITELLM_KEY else {},
             json={
-                "model": "glm-4.5-air",
+                "model": LITELLM_MODEL,
                 "max_tokens": 20,
                 "messages": [
                     {"role": "system", "content": "Generate a short title (max 6 words) for this AI coding conversation. Return ONLY the title, nothing else."},
