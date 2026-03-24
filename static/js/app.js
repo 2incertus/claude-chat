@@ -2392,13 +2392,9 @@
 
   function scrollToBottom(force) {
     if (force || isUserNearBottom) {
-      requestAnimationFrame(function() {
-        if (force && lastMessageCount === 0) {
-          chatFeed.scrollTop = chatFeed.scrollHeight;
-        } else {
-          chatFeed.scrollTo({ top: chatFeed.scrollHeight, behavior: 'smooth' });
-        }
-      });
+      // Ensure visibility is restored before scrolling
+      chatFeed.style.visibility = '';
+      chatFeed.scrollTop = chatFeed.scrollHeight;
       newMsgPill.classList.remove('visible');
     }
   }
