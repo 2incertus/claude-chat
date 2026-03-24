@@ -460,6 +460,7 @@ def discover_sessions() -> list[dict]:
             "-F", "#{session_name}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}\t#{pane_dead}"
         )
     except RuntimeError:
+        log("session", "session_discovery", level="ERROR", error="tmux list-panes failed")
         return []
 
     sessions = []
@@ -501,6 +502,9 @@ def discover_sessions() -> list[dict]:
             "state": state,
         })
 
+    active = sum(1 for s in sessions if s["state"] == "active")
+    dead = sum(1 for s in sessions if s["state"] == "dead")
+    log("session", "session_discovery", total=len(sessions), active=active, dead=dead)
     return sessions
 
 
