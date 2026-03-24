@@ -163,6 +163,9 @@ def _setup_logging():
     sh.setFormatter(formatter)
     _logger.addHandler(sh)
 
+    # Suppress uvicorn's default access log (we log requests in structured JSON)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 
 def log(category: str, action: str, level: str = "INFO", session: str = None,
         duration_ms: int = None, request_id: str = None, connection_id: str = None,
