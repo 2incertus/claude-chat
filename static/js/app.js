@@ -1111,15 +1111,15 @@
   function updateStatusDot(status) {
     var prevSessionStatus = currentSessionStatus;
     currentSessionStatus = status;
+    // Always force-hide typing indicator first, then show only if truly working
+    typingIndicator.classList.remove('visible');
     if (status === 'working') {
       chatStatus.className = 'status-dot working';
       typingIndicator.classList.add('visible');
     } else if (status === 'waiting_input') {
       chatStatus.className = 'status-dot waiting';
-      typingIndicator.classList.remove('visible');
     } else {
       chatStatus.className = 'status-dot';
-      typingIndicator.classList.remove('visible');
     }
     // Update working count estimate for tab title
     if (prevSessionStatus === 'working' && status !== 'working') {

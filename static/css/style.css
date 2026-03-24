@@ -586,7 +586,7 @@ body {
   animation: msgIn 150ms ease-out;
 }
 @keyframes msgIn {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .msg-user {
@@ -1040,24 +1040,26 @@ body {
 /* Typing indicator */
 .typing-indicator {
   align-self: flex-start;
-  padding: 10px 16px;
+  padding: var(--sp-2) var(--sp-4);
   display: none;
   gap: 5px;
   align-items: center;
+  opacity: 0;
+  transition: opacity 200ms ease;
 }
-.typing-indicator.visible { display: flex; }
+.typing-indicator.visible { display: flex; opacity: 1; }
 .typing-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-dim);
-  animation: typingPulse 1.2s infinite;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  animation: typingPulse 1.4s ease-in-out infinite;
 }
-.typing-dot:nth-child(2) { animation-delay: 0.2s; }
-.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
 @keyframes typingPulse {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.85); }
-  40% { opacity: 1; transform: scale(1); }
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.1); }
 }
 
 /* New messages pill */
@@ -1273,8 +1275,12 @@ body {
 .send-inline-btn {
   background: var(--accent);
   color: white;
+  transition: transform 150ms ease, box-shadow 150ms ease;
 }
-.send-inline-btn:active { transform: scale(0.9); }
+.send-inline-btn:active {
+  transform: scale(0.88);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
 .mic-label {
   margin-top: 4px;
   font-size: 0.72rem;
