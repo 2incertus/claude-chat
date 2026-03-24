@@ -1311,12 +1311,19 @@
       var found = messages.some(function(m) {
         if (m.role !== 'user') return false;
         var mNorm = normalize(m.content);
-        // Primary check: first 30 chars match (after whitespace normalization + lowercase)
+        // Primary: first 30 chars of pending found in server message
         if (mNorm.indexOf(pmSnippet) >= 0) return true;
-        // Fallback: timestamp proximity (within 30s) AND content starts the same (first 15 chars)
+        // Fallback 1: timestamp proximity + first 15 chars match
         if (m.ts && Math.abs(m.ts - pm.ts) < 30000) {
           var shortSnippet = pmNorm.substring(0, 15);
           if (shortSnippet && mNorm.indexOf(shortSnippet) >= 0) return true;
+        }
+        // Fallback 2: server msg is similar (handles first-char-eaten by tmux)
+        // Check if skipping 1-3 chars from either side yields a match
+        if (pmNorm.length > 10 && mNorm.length > 10) {
+          var pmTail = pmNorm.substring(3);
+          var mTail = mNorm.substring(3);
+          if (pmTail.substring(0, 20) === mTail.substring(0, 20)) return true;
         }
         return false;
       });

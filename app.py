@@ -918,8 +918,10 @@ async def send_to_session(name: str, body: SendBody):
     if not text:
         raise HTTPException(status_code=400, detail="text must not be empty")
 
-    # Exit copy/scroll mode if active (Escape is safe -- no-op at normal prompt)
+    # Exit copy/scroll mode if active, then small delay so Escape doesn't
+    # combine with first character into an escape sequence
     run_tmux("send-keys", "-t", name, "Escape")
+    await asyncio.sleep(0.05)
     # Send the text literally (prevents key injection), then Enter separately
     run_tmux("send-keys", "-t", name, "-l", text)
     run_tmux("send-keys", "-t", name, "Enter")
