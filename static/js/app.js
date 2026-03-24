@@ -1278,7 +1278,8 @@
   }
 
   function renderMessages(messages) {
-    // Clear feed
+    // Prevent flicker: hide feed during re-render, show after all nodes added
+    chatFeed.style.visibility = 'hidden';
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
 
     // Group consecutive tool calls into collapsible activity blocks
@@ -1337,6 +1338,8 @@
     pendingMessages.forEach(function(pm) {
       appendMessage(pm, false, null, -1);
     });
+    // Show feed now that all nodes are added (prevents blank flash)
+    chatFeed.style.visibility = '';
   }
 
   // ========== Syntax Highlighting ==========
@@ -2214,6 +2217,9 @@
     };
 
     wsConnection.onmessage = function(event) {
+      // Guard: ignore messages if we've switched to a different session
+      if (currentSession !== sessionName) return;
+
       var data;
       try { data = JSON.parse(event.data); } catch(e) { return; }
 
