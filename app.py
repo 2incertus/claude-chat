@@ -203,6 +203,7 @@ async def _save_title(session_name: str, title: str):
         (session_name, title)
     )
     await db.commit()
+    log("db", "db_query", table="titles", operation="upsert", session=session_name)
 
 
 async def _index_messages(session_name: str, messages: list[dict], chash: str):
@@ -221,6 +222,8 @@ async def _index_messages(session_name: str, messages: list[dict], chash: str):
              json.dumps(m.get("tool_results", [])), m.get("ts", 0), chash)
         )
     await db.commit()
+    log("db", "db_query", table="messages", operation="reindex",
+        session=session_name, rows=len(messages))
 
 
 async def init_db():
@@ -1301,10 +1304,13 @@ async def session_websocket(ws: WebSocket, name: str):
     token = ws.query_params.get("token", "")
     if AUTH_ENABLED and token not in valid_tokens:
         await ws.close(code=4001, reason="Unauthorized")
+        log("websocket", "ws_connect", level="WARNING", session=name, result="unauthorized")
         return
 
     validate_session_name(name)
+    conn_id = str(uuid.uuid4())[:8]
     await ws_manager.connect(name, ws)
+    log("websocket", "ws_connect", session=name, connection_id=conn_id)
 
     try:
         last_hash = ""
@@ -1313,6 +1319,7 @@ async def session_websocket(ws: WebSocket, name: str):
                 raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", "-10000")
             except RuntimeError:
                 await ws.send_json({"type": "session_dead"})
+                log("websocket", "ws_session_dead", session=name, connection_id=conn_id)
                 break
 
             chash = content_hash(raw)
@@ -1331,6 +1338,8 @@ async def session_websocket(ws: WebSocket, name: str):
                     "cost_info": cost_info,
                 })
                 last_hash = chash
+                log("websocket", "ws_message_sent", session=name,
+                    connection_id=conn_id, has_changes=True, message_count=len(messages))
             else:
                 await ws.send_json({
                     "type": "status",
@@ -1340,15 +1349,23 @@ async def session_websocket(ws: WebSocket, name: str):
                     "waiting_input": status == "waiting_input",
                     "cost_info": cost_info,
                 })
+                log("websocket", "ws_message_sent", session=name,
+                    connection_id=conn_id, has_changes=False, status=status)
 
             try:
-                await asyncio.wait_for(ws.receive_text(), timeout=1.5)
+                msg = await asyncio.wait_for(ws.receive_text(), timeout=1.5)
+                log("websocket", "ws_message_received", session=name,
+                    connection_id=conn_id, text_length=len(msg))
             except asyncio.TimeoutError:
                 pass
             except WebSocketDisconnect:
                 break
+    except Exception as e:
+        log("websocket", "ws_error", level="ERROR", session=name,
+            connection_id=conn_id, error=str(e)[:200])
     finally:
         ws_manager.disconnect(name, ws)
+        log("websocket", "ws_disconnect", session=name, connection_id=conn_id)
 
 
 # ---------------------------------------------------------------------------
@@ -1381,6 +1398,8 @@ async def upload_file(session_name: str, file: UploadFile = File(...)):
 
     host_path = f"/srv/appdata/claude-chat/uploads/{filename}"
 
+    log("upload", "file_upload", session=session_name,
+        filename=safe_name, size=len(content), content_type=file.content_type)
     return {"uploaded": True, "filename": filename, "path": host_path}
 
 
@@ -1436,6 +1455,7 @@ async def _add_to_history(name: str, title: str, preview: str):
         )
     """)
     await db.commit()
+    log("db", "db_query", table="history", operation="insert", session=name)
 
 
 @app.get("/api/history")
