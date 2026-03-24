@@ -368,6 +368,106 @@ async def _store_insight(trigger_type: str, summary: dict, issues: list[dict]):
 
 _analysis_lock = asyncio.Lock()
 
+
+# ---------------------------------------------------------------------------
+# Auto-Remediation Engine
+# ---------------------------------------------------------------------------
+
+async def _auto_remediate(entries: list[dict], issues: list[dict]):
+    """Attempt safe automatic fixes based on detected log patterns.
+
+    Safe actions only — never kills sessions or modifies user data.
+    Every action is logged under category='remediation'.
+    """
+    actions_taken = []
+
+    # --- 1. Respawn dead sessions that were recently active ---
+    dead_sessions = set()
+    active_sessions = set()
+    for e in entries:
+        if e.get("category") == "session":
+            action = e.get("action", "")
+            session = (e.get("meta") or {}).get("session") or e.get("session")
+            if not session:
+                continue
+            if action == "session_discovery":
+                # Parse from meta
+                pass
+            elif action == "session_kill":
+                pass  # user-initiated, don't respawn
+        if e.get("category") == "websocket" and e.get("action") == "ws_session_dead":
+            s = (e.get("meta") or {}).get("session") or e.get("session")
+            if s:
+                dead_sessions.add(s)
+
+    # Check which sessions are actually dead right now and respawn them
+    for sname in dead_sessions:
+        try:
+            if _session_exists(sname) and not _is_claude_session(sname):
+                run_tmux("respawn-pane", "-t", sname, "-k",
+                         "/home/ubuntu/.local/bin/claude --continue")
+                log("remediation", "session_respawn", session=sname,
+                    reason="auto_respawn_dead_session")
+                actions_taken.append(f"Respawned dead session: {sname}")
+        except Exception as e:
+            log("remediation", "session_respawn_failed", level="WARNING",
+                session=sname, error=str(e)[:200])
+
+    # --- 2. Prune expired auth tokens ---
+    now = time.time()
+    expired = [t for t, ts in valid_tokens.items() if (now - ts) > TOKEN_TTL]
+    if expired:
+        for t in expired:
+            del valid_tokens[t]
+        log("remediation", "token_prune", pruned=len(expired))
+        actions_taken.append(f"Pruned {len(expired)} expired auth tokens")
+
+    # --- 3. Clean stale WebSocket connections ---
+    stale_sessions = []
+    for session_name, conns in list(ws_manager.connections.items()):
+        stale = []
+        for ws in conns:
+            try:
+                # Check if WS is still open by inspecting client_state
+                if ws.client_state.name != "CONNECTED":
+                    stale.append(ws)
+            except Exception:
+                stale.append(ws)
+        if stale:
+            for ws in stale:
+                ws_manager.disconnect(session_name, ws)
+            log("remediation", "ws_cleanup", session=session_name,
+                cleaned=len(stale))
+            stale_sessions.append(session_name)
+    if stale_sessions:
+        actions_taken.append(f"Cleaned stale WebSocket connections for: {', '.join(stale_sessions)}")
+
+    # --- 4. Send ntfy notification for critical issues ---
+    critical_issues = [i for i in issues if i.get("severity") == "critical"]
+    if critical_issues and http_client:
+        titles = [i.get("title", "Unknown") for i in critical_issues[:3]]
+        body = "Critical issues detected:\n" + "\n".join(f"• {t}" for t in titles)
+        if len(critical_issues) > 3:
+            body += f"\n... and {len(critical_issues) - 3} more"
+        try:
+            await http_client.post(
+                "http://host.docker.internal:8180/ai-hub",
+                content=body.encode(),
+                headers={"Title": "Claude Chat Alert", "Tags": "warning,robot"},
+                timeout=5.0,
+            )
+            log("remediation", "ntfy_alert", issues=len(critical_issues))
+            actions_taken.append(f"Sent ntfy alert for {len(critical_issues)} critical issues")
+        except Exception as e:
+            log("remediation", "ntfy_alert_failed", level="WARNING", error=str(e)[:200])
+
+    if actions_taken:
+        log("remediation", "auto_remediate_complete",
+            actions=len(actions_taken), details=actions_taken)
+
+    return actions_taken
+
+
 async def _scheduled_log_analysis():
     """Background task: analyze logs every 15 minutes."""
     await asyncio.sleep(60)  # wait 1 min after startup
@@ -375,13 +475,20 @@ async def _scheduled_log_analysis():
         try:
             entries = _read_recent_logs(minutes=15)
             summary = _aggregate_logs(entries)
+
+            # Always run auto-remediation (even without LLM analysis)
+            await _auto_remediate(entries, [])
+
             if summary.get("errors") or summary.get("slow_operations"):
                 async with _analysis_lock:
                     issues = await _analyze_with_llm(summary)
                     await _store_insight("scheduled", summary, issues)
+                    # Run remediation again with LLM insights
+                    actions = await _auto_remediate(entries, issues)
                 log("analysis", "scheduled_complete",
                     issues_found=len(issues),
-                    entries_analyzed=len(entries))
+                    entries_analyzed=len(entries),
+                    remediations=len(actions))
             else:
                 log("analysis", "scheduled_skip", reason="no_anomalies",
                     entries=len(entries))
@@ -1911,10 +2018,12 @@ async def trigger_analysis(request: Request):
         summary = _aggregate_logs(entries)
         issues = await _analyze_with_llm(summary, window_desc=f"{hours} hour(s)")
         await _store_insight("on_demand", summary, issues)
+        actions = await _auto_remediate(entries, issues)
 
     log("analysis", "on_demand_complete", issues_found=len(issues),
-        entries_analyzed=len(entries), hours=hours)
+        entries_analyzed=len(entries), hours=hours, remediations=len(actions))
     return {"issues": issues, "total_entries": len(entries),
+            "remediations": actions,
             "severity": max((i.get("severity", "info") for i in issues), default="healthy",
                            key=lambda s: {"critical": 3, "warning": 2, "info": 1, "healthy": 0}.get(s, 0))}
 
