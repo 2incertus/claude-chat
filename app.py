@@ -707,6 +707,7 @@ async def generate_title(session_name: str, messages: list[dict]) -> tuple[str, 
         return session_name
 
     snippet = " | ".join(m["content"][:200] for m in user_msgs)
+    t0 = time.perf_counter()
     try:
         resp = await http_client.post(
             LITELLM_URL,
@@ -722,8 +723,14 @@ async def generate_title(session_name: str, messages: list[dict]) -> tuple[str, 
         )
         resp.raise_for_status()
         title = resp.json()["choices"][0]["message"]["content"].strip().strip('"\'')[:60]
+        elapsed = int((time.perf_counter() - t0) * 1000)
+        log("external", "litellm_request", session=session_name,
+            model="glm-4.5-air", duration_ms=elapsed, success=True)
         return title or session_name
-    except Exception:
+    except Exception as e:
+        elapsed = int((time.perf_counter() - t0) * 1000)
+        log("external", "litellm_request", level="WARNING", session=session_name,
+            model="glm-4.5-air", duration_ms=elapsed, success=False, error=str(e)[:200])
         return user_msgs[0]["content"][:50] if user_msgs else session_name
 
 
@@ -1059,6 +1066,7 @@ async def transcribe(file: UploadFile = File(...)):
     audio_data = await file.read()
     if len(audio_data) == 0:
         raise HTTPException(status_code=400, detail="Empty audio file")
+    t0 = time.perf_counter()
     try:
         r = await http_client.post(
             f"{WHISPER_URL}/asr",
@@ -1067,10 +1075,17 @@ async def transcribe(file: UploadFile = File(...)):
             timeout=30.0,
         )
         r.raise_for_status()
+        elapsed = int((time.perf_counter() - t0) * 1000)
+        log("external", "whisper_request", duration_ms=elapsed,
+            success=True, file_size=len(audio_data))
         return r.json()
     except httpx.TimeoutException:
+        log("external", "whisper_request", level="ERROR", success=False,
+            error="timeout", file_size=len(audio_data))
         raise HTTPException(status_code=504, detail="Whisper timed out")
     except Exception as e:
+        log("external", "whisper_request", level="ERROR", success=False,
+            error=str(e)[:200], file_size=len(audio_data))
         raise HTTPException(status_code=502, detail=f"Whisper error: {str(e)}")
 
 
@@ -1443,6 +1458,7 @@ async def search_messages(q: str = "", limit: int = 20):
     results = []
 
     # Primary: search ChromaDB session logs (7k+ chunks of historical sessions)
+    t0 = time.perf_counter()
     try:
         chroma_resp = await http_client.post(
             f"{CHROMA_URL}/api/v2/tenants/default_tenant/databases/default_database"
@@ -1483,8 +1499,12 @@ async def search_messages(q: str = "", limit: int = 20):
                     "project": meta.get("project_path", ""),
                     "source": "history",
                 })
+            elapsed = int((time.perf_counter() - t0) * 1000)
+            log("external", "chroma_request", duration_ms=elapsed,
+                success=True, results=len(data.get("ids", [])))
     except Exception:
-        pass
+        log("external", "chroma_request", level="WARNING", success=False,
+            duration_ms=int((time.perf_counter() - t0) * 1000))
 
     # Secondary: search current session messages in SQLite
     try:
@@ -1565,8 +1585,10 @@ async def send_ntfy(request_body: dict):
             },
             timeout=5.0,
         )
+        log("external", "ntfy_request", success=True, status=resp.status_code)
         return {"sent": True, "status": resp.status_code}
     except Exception as e:
+        log("external", "ntfy_request", level="ERROR", success=False, error=str(e)[:200])
         raise HTTPException(status_code=502, detail=f"ntfy error: {str(e)}")
 
 
