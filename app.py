@@ -196,6 +196,194 @@ def log(category: str, action: str, level: str = "INFO", session: str = None,
     })
 
 
+def _read_recent_logs(minutes: int = 15) -> list[dict]:
+    """Read recent log entries from local log files."""
+    log_dir = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "logs")
+    entries = []
+    cutoff = datetime.now(timezone.utc).timestamp() - (minutes * 60)
+
+    # Read current + first backup to handle rotation boundary
+    for fname in ["claude-chat.log", "claude-chat.log.1"]:
+        fpath = os.path.join(log_dir, fname)
+        try:
+            with open(fpath, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        ts_str = entry.get("ts", "")
+                        if ts_str:
+                            ts_dt = datetime.fromisoformat(ts_str)
+                            if ts_dt.timestamp() >= cutoff:
+                                entries.append(entry)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+        except FileNotFoundError:
+            continue
+    return entries
+
+
+def _aggregate_logs(entries: list[dict]) -> dict:
+    """Aggregate log entries into a summary for LLM analysis."""
+    if not entries:
+        return {"total_entries": 0, "errors": [], "warnings": [], "slow_operations": [], "anomalies": []}
+
+    errors: dict[str, dict] = {}
+    warnings: dict[str, dict] = {}
+    durations: dict[str, list] = {}
+    category_counts: dict[str, int] = {}
+
+    for e in entries:
+        cat = e.get("category", "unknown")
+        action = e.get("action", "unknown")
+        level = e.get("level", "INFO")
+        meta = e.get("meta") or {}
+        category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        if level == "ERROR":
+            key = f"{cat}:{action}:{str(meta.get('error', ''))[:50]}"
+            if key not in errors:
+                errors[key] = {"category": cat, "action": action, "count": 0,
+                               "sample_error": str(meta.get("error", ""))[:200],
+                               "first_seen": e.get("ts"), "last_seen": e.get("ts")}
+            errors[key]["count"] += 1
+            errors[key]["last_seen"] = e.get("ts")
+
+        elif level == "WARNING":
+            key = f"{cat}:{action}"
+            if key not in warnings:
+                warnings[key] = {"category": cat, "action": action, "count": 0,
+                                 "first_seen": e.get("ts")}
+            warnings[key]["count"] += 1
+
+        dur = e.get("duration_ms") or (meta.get("duration_ms") if meta else None)
+        if dur and isinstance(dur, (int, float)):
+            dk = f"{cat}:{action}"
+            durations.setdefault(dk, []).append(dur)
+
+    slow_ops = []
+    for dk, times in durations.items():
+        if len(times) < 3:
+            continue
+        times_sorted = sorted(times)
+        p95 = times_sorted[int(len(times_sorted) * 0.95)]
+        if p95 > 1000:
+            cat, action = dk.split(":", 1)
+            slow_ops.append({
+                "category": cat, "action": action,
+                "avg_ms": int(sum(times) / len(times)),
+                "max_ms": int(max(times)),
+                "p95_ms": int(p95),
+                "count": len(times),
+            })
+
+    ts_list = [e.get("ts", "") for e in entries if e.get("ts")]
+    return {
+        "window": {"start": min(ts_list) if ts_list else "", "end": max(ts_list) if ts_list else "",
+                    "total_entries": len(entries)},
+        "errors": list(errors.values()),
+        "warnings": list(warnings.values()),
+        "slow_operations": slow_ops,
+        "category_counts": category_counts,
+    }
+
+
+async def _analyze_with_llm(summary: dict, window_desc: str = "15 minutes") -> list[dict]:
+    """Send aggregated log summary to LLM for analysis."""
+    prompt = f"""You are a site reliability engineer analyzing logs from claude-chat, a web app that manages Claude Code sessions via tmux.
+
+Here is a summary of the last {window_desc} of log activity:
+{json.dumps(summary, indent=2)}
+
+For each issue found, respond with a JSON array of objects, each with:
+- severity: "critical" or "warning" or "info"
+- title: one-line summary
+- description: what's happening and likely root cause
+- recommendation: specific fix
+- category: which log category this affects
+
+Be specific. Reference actual error messages from the data. Do not invent issues not evidenced by the logs. If no issues found, return an empty array [].
+Respond with ONLY the JSON array, no other text."""
+
+    try:
+        resp = await http_client.post(
+            LITELLM_URL,
+            json={
+                "model": "glm-4.5-air",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"].strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        issues = json.loads(text)
+        if not isinstance(issues, list):
+            issues = []
+        return issues[:20]
+    except Exception as e:
+        log("analysis", "llm_error", level="ERROR", error=str(e)[:200])
+        return [{"severity": "warning", "title": "Analysis failed",
+                 "description": f"LLM analysis error: {str(e)[:200]}",
+                 "recommendation": "Check LiteLLM connectivity", "category": "analysis"}]
+
+
+async def _store_insight(trigger_type: str, summary: dict, issues: list[dict]):
+    """Store analysis result in SQLite."""
+    severity = "healthy"
+    for issue in issues:
+        s = issue.get("severity", "info")
+        if s == "critical":
+            severity = "critical"
+            break
+        elif s == "warning" and severity != "critical":
+            severity = "warning"
+        elif s == "info" and severity == "healthy":
+            severity = "info"
+
+    now = datetime.now(timezone.utc).isoformat(timespec='milliseconds')
+    window = summary.get("window", {})
+    await db.execute(
+        """INSERT INTO log_insights
+           (created_at, window_start, window_end, trigger_type, total_entries,
+            error_count, severity, issues, raw_summary, dismissed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        (now, window.get("start", now), window.get("end", now),
+         trigger_type, window.get("total_entries", 0),
+         len(summary.get("errors", [])), severity,
+         json.dumps(issues)[:10000], json.dumps(summary)[:10000])
+    )
+    await db.commit()
+
+
+_analysis_lock = asyncio.Lock()
+
+async def _scheduled_log_analysis():
+    """Background task: analyze logs every 15 minutes."""
+    await asyncio.sleep(60)  # wait 1 min after startup
+    while True:
+        try:
+            entries = _read_recent_logs(minutes=15)
+            summary = _aggregate_logs(entries)
+            if summary.get("errors") or summary.get("slow_operations"):
+                async with _analysis_lock:
+                    issues = await _analyze_with_llm(summary)
+                    await _store_insight("scheduled", summary, issues)
+                log("analysis", "scheduled_complete",
+                    issues_found=len(issues),
+                    entries_analyzed=len(entries))
+            else:
+                log("analysis", "scheduled_skip", reason="no_anomalies",
+                    entries=len(entries))
+        except Exception as e:
+            log("analysis", "scheduled_error", level="ERROR", error=str(e)[:200])
+        await asyncio.sleep(900)  # 15 minutes
+
+
 async def _save_title(session_name: str, title: str):
     title_cache[session_name] = title
     await db.execute(
@@ -261,6 +449,21 @@ async def init_db():
         CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_name);
         CREATE INDEX IF NOT EXISTS idx_messages_content ON messages(content);
         CREATE INDEX IF NOT EXISTS idx_history_dismissed ON history(dismissed_at);
+        CREATE TABLE IF NOT EXISTS log_insights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            trigger_type TEXT NOT NULL,
+            total_entries INTEGER NOT NULL,
+            error_count INTEGER NOT NULL,
+            severity TEXT NOT NULL,
+            issues TEXT NOT NULL,
+            raw_summary TEXT NOT NULL,
+            dismissed INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_insights_created ON log_insights(created_at);
+        CREATE INDEX IF NOT EXISTS idx_insights_severity ON log_insights(severity);
     """)
     await db.commit()
 
@@ -332,6 +535,7 @@ async def lifespan(app: FastAPI):
         async for row in cursor:
             title_cache[row["session_name"]] = row["title"]
     log("system", "startup_complete", titles_loaded=len(title_cache))
+    asyncio.create_task(_scheduled_log_analysis())
     yield
     log("system", "shutdown")
     if db:
