@@ -22,6 +22,25 @@
   --spinner-border: rgba(255,255,255,0.2);
   --cmd-pill-bg: rgba(255,255,255,0.12);
   --toast-success-text: #FFFFFF;
+  /* Spacing scale (4px grid) */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  /* Type scale */
+  --text-xs: 0.65rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.85rem;
+  --text-md: 0.95rem;
+  --text-lg: 1.1rem;
+  /* Radius scale */
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-full: 9999px;
 }
 :root[data-theme="oled"] {
   --bg: #000000;
@@ -94,7 +113,7 @@ body {
 .header {
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 var(--sp-3);
   min-height: 56px;
   padding-top: env(safe-area-inset-top, 0px);
   background: var(--surface);
@@ -277,8 +296,8 @@ body {
 .session-group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px 4px;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-1) var(--sp-1);
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
@@ -286,7 +305,7 @@ body {
 }
 .session-group-chevron {
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   transition: transform 150ms ease;
   flex-shrink: 0;
 }
@@ -294,17 +313,21 @@ body {
   transform: rotate(-90deg);
 }
 .session-group-path {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 500;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .session-group-count {
   color: var(--text-muted);
-  font-size: 0.68rem;
-  opacity: 0.7;
+  font-size: var(--text-xs);
+  background: var(--surface2);
+  padding: 1px 6px;
+  border-radius: var(--r-full);
   flex-shrink: 0;
 }
 .session-group.collapsed .session-group-items {
@@ -433,9 +456,9 @@ body {
 }
 .session-card {
   background: var(--surface);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 10px;
+  border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4);
+  margin-bottom: var(--sp-2);
   cursor: pointer;
   touch-action: manipulation;
   transition: transform 100ms ease, background 150ms ease;
@@ -452,7 +475,7 @@ body {
   gap: 8px;
 }
 .session-card-title {
-  font-size: 0.95rem;
+  font-size: var(--text-base);
   font-weight: 600;
   line-height: 1.3;
   flex: 1;
@@ -467,7 +490,7 @@ body {
   flex-shrink: 0;
 }
 .session-card-time {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -491,9 +514,9 @@ body {
   white-space: nowrap;
 }
 .session-card-preview {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
-  margin-top: 6px;
+  margin-top: var(--sp-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -549,14 +572,14 @@ body {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 16px;
+  padding: var(--sp-3) var(--sp-4);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--sp-2);
 }
 .msg {
-  border-radius: var(--radius);
-  font-size: 0.88rem;
+  border-radius: var(--r-lg);
+  font-size: var(--text-base);
   line-height: 1.55;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -568,18 +591,18 @@ body {
 }
 .msg-user {
   align-self: flex-end;
-  background: #D4622F;
+  background: var(--accent);
   color: white;
-  padding: 10px 14px;
+  padding: var(--sp-3) var(--sp-4);
   max-width: 78%;
-  border-radius: 20px 20px 4px 20px;
+  border-radius: var(--r-lg) var(--r-lg) var(--sp-1) var(--r-lg);
 }
 .msg-assistant {
   align-self: flex-start;
   background: var(--surface2);
-  padding: 12px 14px;
+  padding: var(--sp-3) var(--sp-4);
   max-width: 92%;
-  border-radius: 4px 20px 20px 20px;
+  border-radius: var(--sp-1) var(--r-lg) var(--r-lg) var(--r-lg);
 }
 .msg-assistant-text {
   white-space: normal;
@@ -1123,11 +1146,10 @@ body {
 .input-area {
   flex-shrink: 0;
   position: relative;
-  padding: 8px 16px 0;
+  padding: var(--sp-2) var(--sp-4) 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
   z-index: 12;
-  /* Extend background through safe area */
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 /* Special keys toolbar fills the safe area */
@@ -2654,5 +2676,14 @@ body.font-large { font-size: 18px; }
   #screenChat .header .bell-btn svg {
     width: 13px;
     height: 13px;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
