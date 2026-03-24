@@ -10,6 +10,10 @@ import time
 import httpx
 import yaml
 import aiosqlite
+import uuid
+import logging
+from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, Response
@@ -72,6 +76,124 @@ title_cache: dict[str, str] = {}
 death_cache: dict[str, float] = {}
 DB_PATH = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "claude-chat.db")
 db: aiosqlite.Connection | None = None
+
+
+# ---------------------------------------------------------------------------
+# Structured Logging
+# ---------------------------------------------------------------------------
+
+class StructuredFormatter(logging.Formatter):
+    """JSON-line formatter for structured log entries."""
+    def format(self, record):
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec='milliseconds')
+        entry = {
+            "ts": ts,
+            "level": record.levelname,
+            "category": getattr(record, "category", "system"),
+            "action": getattr(record, "action", "unknown"),
+            "session": getattr(record, "session", None),
+            "duration_ms": getattr(record, "duration_ms", None),
+            "source": "backend",
+            "request_id": getattr(record, "request_id", None),
+            "connection_id": getattr(record, "connection_id", None),
+            "meta": getattr(record, "meta", None),
+        }
+        return json.dumps({k: v for k, v in entry.items() if v is not None})
+
+
+class LogRateLimiter:
+    """Prevent log storms by batching high-frequency entries.
+    Uses lazy emission: summary emitted on next call after window expires."""
+    def __init__(self, window_sec=5, max_per_window=50):
+        self.window_sec = window_sec
+        self.max_per_window = max_per_window
+        self.counts: dict[tuple, dict] = {}
+
+    def check(self, category: str, action: str) -> tuple[bool, dict | None]:
+        """Returns (should_log, summary_or_none)."""
+        key = (category, action)
+        now = time.time()
+        summary = None
+
+        if key in self.counts:
+            bucket = self.counts[key]
+            if now - bucket["start"] > self.window_sec:
+                if bucket["suppressed"] > 0:
+                    summary = {
+                        "suppressed_count": bucket["suppressed"],
+                        "window_sec": self.window_sec,
+                    }
+                self.counts[key] = {"start": now, "count": 1, "suppressed": 0}
+                return True, summary
+            else:
+                bucket["count"] += 1
+                if bucket["count"] > self.max_per_window:
+                    bucket["suppressed"] += 1
+                    return False, None
+                return True, None
+        else:
+            self.counts[key] = {"start": now, "count": 1, "suppressed": 0}
+            return True, None
+
+
+_rate_limiter = LogRateLimiter()
+_logger = logging.getLogger("claude-chat")
+_logger.setLevel(logging.DEBUG)
+_logger.propagate = False
+
+
+def _setup_logging():
+    """Configure file + stdout handlers. Called during lifespan startup."""
+    log_dir = os.path.join(os.environ.get("UPLOAD_DIR", "/uploads"), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    formatter = StructuredFormatter()
+
+    # Rotating file handler: 10MB x 10 = 100MB cap
+    fh = RotatingFileHandler(
+        os.path.join(log_dir, "claude-chat.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=9,
+    )
+    fh.setFormatter(formatter)
+    _logger.addHandler(fh)
+
+    # Stdout handler (Promtail picks this up for Loki)
+    sh = logging.StreamHandler()
+    sh.setFormatter(formatter)
+    _logger.addHandler(sh)
+
+
+def log(category: str, action: str, level: str = "INFO", session: str = None,
+        duration_ms: int = None, request_id: str = None, connection_id: str = None,
+        **meta):
+    """Convenience wrapper for structured logging throughout the app."""
+    should_log, summary = _rate_limiter.check(category, action)
+
+    # Emit rate-limit summary from previous window if any
+    if summary:
+        _logger.log(logging.WARNING, "", extra={
+            "category": category,
+            "action": f"{action}_rate_limited",
+            "session": None,
+            "duration_ms": None,
+            "request_id": None,
+            "connection_id": None,
+            "meta": summary,
+        })
+
+    if not should_log:
+        return
+
+    _logger.log(getattr(logging, level, logging.INFO), "", extra={
+        "category": category,
+        "action": action,
+        "session": session,
+        "duration_ms": duration_ms,
+        "request_id": request_id,
+        "connection_id": connection_id,
+        "meta": meta if meta else None,
+    })
 
 
 async def _save_title(session_name: str, title: str):
