@@ -1589,6 +1589,46 @@ async def put_settings(body: dict):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Frontend log ingestion
+# ---------------------------------------------------------------------------
+_frontend_log_counts: dict[str, list] = {}  # ip -> [timestamps]
+
+
+@app.post("/api/log")
+async def ingest_frontend_logs(request: Request):
+    """Receive batched frontend log entries. Rate-limited to 200/min per client."""
+    body = await request.json()
+    if not isinstance(body, list):
+        raise HTTPException(status_code=400, detail="Expected array of log entries")
+
+    # Rate limit: 200 entries/min per client
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    if client_ip not in _frontend_log_counts:
+        _frontend_log_counts[client_ip] = []
+    # Prune old timestamps
+    _frontend_log_counts[client_ip] = [t for t in _frontend_log_counts[client_ip] if now - t < 60]
+    if len(_frontend_log_counts[client_ip]) + len(body) > 200:
+        raise HTTPException(status_code=429, detail="Too many log entries")
+    _frontend_log_counts[client_ip].extend([now] * len(body))
+
+    for entry in body[:100]:  # hard cap per batch
+        if not isinstance(entry, dict):
+            continue
+        category = entry.get("category", "frontend")
+        action = entry.get("action", "unknown")
+        level = entry.get("level", "INFO")
+        if level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            level = "INFO"
+        session = entry.get("session")
+        meta = entry.get("meta")
+        log(category, action, level=level, session=session,
+            **(meta if isinstance(meta, dict) else {}))
+
+    return {"accepted": len(body)}
+
+
 @app.post("/api/ntfy")
 async def send_ntfy(request_body: dict):
     """Proxy notification to internal ntfy server."""
