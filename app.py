@@ -1833,6 +1833,137 @@ async def ingest_frontend_logs(request: Request):
     return {"accepted": len(body)}
 
 
+# ---------------------------------------------------------------------------
+# Log insights API
+# ---------------------------------------------------------------------------
+_last_analysis_time: float = 0
+
+
+@app.get("/api/insights")
+async def list_insights(severity: str = "", limit: int = 20):
+    """List recent log analysis insights."""
+    if severity and severity in ("critical", "warning", "info", "healthy"):
+        async with db.execute(
+            "SELECT * FROM log_insights WHERE severity = ? AND dismissed = 0 ORDER BY created_at DESC LIMIT ?",
+            (severity, min(limit, 50))
+        ) as cursor:
+            rows = await cursor.fetchall()
+    else:
+        async with db.execute(
+            "SELECT * FROM log_insights WHERE dismissed = 0 ORDER BY created_at DESC LIMIT ?",
+            (min(limit, 50),)
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+    results = []
+    for row in rows:
+        r = dict(row)
+        try:
+            r["issues"] = json.loads(r["issues"])
+        except Exception:
+            r["issues"] = []
+        results.append(r)
+    return {"insights": results}
+
+
+@app.get("/api/insights/{insight_id}")
+async def get_insight(insight_id: int):
+    """Get a single insight by ID."""
+    async with db.execute("SELECT * FROM log_insights WHERE id = ?", (insight_id,)) as cursor:
+        row = await cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Insight not found")
+    r = dict(row)
+    try:
+        r["issues"] = json.loads(r["issues"])
+        r["raw_summary"] = json.loads(r["raw_summary"])
+    except Exception:
+        pass
+    return r
+
+
+@app.post("/api/insights/analyze")
+async def trigger_analysis(request: Request):
+    """Trigger on-demand log analysis. 60-second cooldown."""
+    global _last_analysis_time
+    now = time.time()
+    if now - _last_analysis_time < 60:
+        remaining = int(60 - (now - _last_analysis_time))
+        raise HTTPException(status_code=429, detail=f"Cooldown: retry in {remaining}s",
+                            headers={"Retry-After": str(remaining)})
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    hours = min(body.get("hours", 1), 24)
+    _last_analysis_time = now
+
+    async with _analysis_lock:
+        entries = _read_recent_logs(minutes=hours * 60)
+        summary = _aggregate_logs(entries)
+        issues = await _analyze_with_llm(summary, window_desc=f"{hours} hour(s)")
+        await _store_insight("on_demand", summary, issues)
+
+    log("analysis", "on_demand_complete", issues_found=len(issues),
+        entries_analyzed=len(entries), hours=hours)
+    return {"issues": issues, "total_entries": len(entries),
+            "severity": max((i.get("severity", "info") for i in issues), default="healthy",
+                           key=lambda s: {"critical": 3, "warning": 2, "info": 1, "healthy": 0}.get(s, 0))}
+
+
+@app.put("/api/insights/{insight_id}/dismiss")
+async def dismiss_insight(insight_id: int):
+    """Dismiss an insight."""
+    await db.execute("UPDATE log_insights SET dismissed = 1 WHERE id = ?", (insight_id,))
+    await db.commit()
+    return {"dismissed": True}
+
+
+@app.get("/api/logs/recent")
+async def get_recent_logs(minutes: int = 5, category: str = ""):
+    """Get recent log entries for the dashboard live stream."""
+    minutes = min(minutes, 60)
+    entries = _read_recent_logs(minutes=minutes)
+    if category:
+        entries = [e for e in entries if e.get("category") == category]
+    return {"entries": entries[-200:][::-1], "total": len(entries)}
+
+
+@app.get("/api/logs/stats")
+async def get_log_stats():
+    """Get aggregate log stats for the dashboard status bar."""
+    entries = _read_recent_logs(minutes=5)
+    total = len(entries)
+    errors = sum(1 for e in entries if e.get("level") == "ERROR")
+    warnings = sum(1 for e in entries if e.get("level") == "WARNING")
+
+    cats: dict[str, int] = {}
+    for e in entries:
+        c = e.get("category", "unknown")
+        cats[c] = cats.get(c, 0) + 1
+
+    last_analysis = None
+    try:
+        async with db.execute(
+            "SELECT created_at FROM log_insights ORDER BY created_at DESC LIMIT 1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                last_analysis = row["created_at"]
+    except Exception:
+        pass
+
+    return {
+        "entries_5min": total,
+        "errors_5min": errors,
+        "warnings_5min": warnings,
+        "entries_per_min": round(total / 5, 1),
+        "categories": cats,
+        "last_analysis": last_analysis,
+    }
+
+
 @app.post("/api/ntfy")
 async def send_ntfy(request_body: dict):
     """Proxy notification to internal ntfy server."""
