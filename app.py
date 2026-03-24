@@ -35,7 +35,7 @@ valid_tokens: dict[str, float] = {}  # token -> creation timestamp
 TOKEN_TTL = 86400  # 24 hours
 TOKEN_MAX = 50
 CLAUDE_DATA_DIR = os.environ.get("CLAUDE_DATA_DIR", "/claude-data")
-LITELLM_URL = "http://host.docker.internal:4000/v1/chat/completions"
+LITELLM_URL = os.environ.get("LITELLM_URL", "http://host.docker.internal:4001/v1/chat/completions")
 
 SESSION_NAME_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_-]*$")
 
