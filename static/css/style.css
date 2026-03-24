@@ -2062,6 +2062,25 @@ button:focus-visible { outline-offset: -2px; }
     will-change: auto !important;
   }
 
+  /* Monitor screen: same layout as chat pane on desktop */
+  #screenMonitor {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+  }
+  #screenMonitor:not(.hidden-right) {
+    transform: none !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    z-index: 3 !important;
+    will-change: auto !important;
+    transition: none !important;
+  }
+  /* When monitor is open, hide chat pane on desktop */
+  .app-shell.monitor-active #screenChat {
+    display: none !important;
+  }
+
   /* Hide back button on desktop */
   .back-btn {
     display: none !important;

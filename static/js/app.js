@@ -4156,9 +4156,18 @@
   var currentLogCategory = 'all';
 
   function showMonitor() {
-    document.getElementById('screenList').classList.add('hidden-right');
-    document.getElementById('screenChat').classList.add('hidden-right');
+    var isDesktop = window.innerWidth >= 768;
+    if (isDesktop) {
+      // Desktop: monitor replaces chat pane, list stays visible
+      document.getElementById('screenList').classList.remove('hidden-right');
+      document.getElementById('screenChat').classList.add('hidden-right');
+    } else {
+      // Mobile: full-screen monitor
+      document.getElementById('screenList').classList.add('hidden-right');
+      document.getElementById('screenChat').classList.add('hidden-right');
+    }
     if (screenMonitor) screenMonitor.classList.remove('hidden-right');
+    document.querySelector('.app-shell').classList.add('monitor-active');
     loadMonitorData();
     if (monitorRefreshTimer) clearInterval(monitorRefreshTimer);
     monitorRefreshTimer = setInterval(loadMonitorData, 30000);
@@ -4167,7 +4176,13 @@
 
   function hideMonitor() {
     if (screenMonitor) screenMonitor.classList.add('hidden-right');
+    document.querySelector('.app-shell').classList.remove('monitor-active');
+    // Always show session list
     document.getElementById('screenList').classList.remove('hidden-right');
+    // Desktop: restore chat pane if a session was active
+    if (window.innerWidth >= 768 && currentSession) {
+      document.getElementById('screenChat').classList.remove('hidden-right');
+    }
     if (monitorRefreshTimer) {
       clearInterval(monitorRefreshTimer);
       monitorRefreshTimer = null;
