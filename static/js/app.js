@@ -92,7 +92,22 @@
     if (authToken) {
       options.headers['Authorization'] = 'Bearer ' + authToken;
     }
-    return fetch(url, options);
+    var t0 = performance.now();
+    return fetch(url, options).then(function(response) {
+      var elapsed = Math.round(performance.now() - t0);
+      if (url !== '/api/log') {
+        AppLog.log('frontend', 'api_call', response.ok ? 'INFO' : 'WARNING', {
+          method: (options.method || 'GET'),
+          path: url.split('?')[0],
+          status: response.status,
+          duration_ms: elapsed
+        });
+      }
+      if (response.status === 401) {
+        showLoginScreen();
+      }
+      return response;
+    });
   }
 
   function showLoginScreen() {
@@ -1330,6 +1345,7 @@
   }
 
   function renderMessages(messages) {
+    var renderStart = performance.now();
     // Prevent flicker: hide feed during re-render, show after all nodes added
     chatFeed.style.visibility = 'hidden';
     while (chatFeed.firstChild) chatFeed.removeChild(chatFeed.firstChild);
@@ -1392,6 +1408,7 @@
     });
     // Show feed now that all nodes are added (prevents blank flash)
     chatFeed.style.visibility = '';
+    AppLog.log('frontend', 'render', 'INFO', { message_count: messages.length, duration_ms: Math.round(performance.now() - renderStart) });
   }
 
   // ========== Syntax Highlighting ==========
@@ -2266,6 +2283,7 @@
     wsConnection.onopen = function() {
       wsReconnectAttempts = 0;
       stopPolling();
+      AppLog.log('frontend', 'ws_connect', 'INFO', { session: sessionName });
     };
 
     wsConnection.onmessage = function(event) {
@@ -2300,7 +2318,8 @@
       idleCount = data.has_changes ? 0 : idleCount + 1;
     };
 
-    wsConnection.onclose = function() {
+    wsConnection.onclose = function(event) {
+      AppLog.log('frontend', 'ws_disconnect', 'WARNING', { session: sessionName, code: event.code });
       wsConnection = null;
       if (wsReconnectAttempts < 5) {
         wsReconnectAttempts++;
@@ -2313,7 +2332,9 @@
       }
     };
 
-    wsConnection.onerror = function() {};
+    wsConnection.onerror = function() {
+      AppLog.log('frontend', 'ws_error', 'ERROR', { session: sessionName });
+    };
   }
 
   function disconnectWebSocket() {
@@ -2577,6 +2598,7 @@
       idleCount = 0;
       stopPolling();
       startPolling();
+      AppLog.log('frontend', 'message_send', 'INFO', { text_length: text.length });
     })
     .catch(function() {
       // Show error in feed
