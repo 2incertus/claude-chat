@@ -31,6 +31,58 @@
   var isRecording = false;
   var isProcessing = false;
 
+  // ========== Structured Logging ==========
+  var AppLog = {
+    buffer: [],
+    flushInterval: 5000,
+    maxBuffer: 100,
+
+    log: function(category, action, level, meta) {
+      if (!level) level = 'INFO';
+      if (!meta) meta = {};
+      this.buffer.push({
+        ts: new Date().toISOString(),
+        level: level,
+        category: category,
+        action: action,
+        source: 'frontend',
+        session: currentSession || null,
+        meta: Object.keys(meta).length ? meta : undefined
+      });
+      if (level === 'ERROR' || this.buffer.length >= this.maxBuffer) {
+        this.flush();
+      }
+    },
+
+    flush: function() {
+      if (!this.buffer.length || !authToken) return;
+      var batch = this.buffer;
+      this.buffer = [];
+      authFetch('/api/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(batch)
+      }).catch(function() {}); // fire and forget
+    }
+  };
+  setInterval(function() { AppLog.flush(); }, 5000);
+
+  // Global error handler
+  window.onerror = function(message, source, lineno, colno, error) {
+    AppLog.log('frontend', 'js_error', 'ERROR', {
+      message: String(message).substring(0, 500),
+      source: source,
+      line: lineno,
+      col: colno,
+      stack: error && error.stack ? error.stack.substring(0, 500) : undefined
+    });
+  };
+  window.addEventListener('unhandledrejection', function(event) {
+    AppLog.log('frontend', 'js_error', 'ERROR', {
+      message: 'Unhandled Promise rejection: ' + String(event.reason).substring(0, 500)
+    });
+  });
+
   // ========== Auth Helpers ==========
   function authFetch(url, options) {
     options = options || {};
