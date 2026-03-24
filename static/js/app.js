@@ -2223,7 +2223,14 @@
       }
 
       if (data.has_changes && data.messages) {
+        checkScrollPosition();
+        var wsSavedScroll = chatFeed.scrollTop;
         renderMessages(data.messages);
+        if (!isUserNearBottom) {
+          chatFeed.scrollTop = wsSavedScroll;
+        } else {
+          scrollToBottom(false);
+        }
         lastMessageCount = data.messages.length;
       }
       if (data.status) {
@@ -2320,10 +2327,16 @@
 
           // Check if user is near bottom before updating
           checkScrollPosition();
+          var savedScroll = chatFeed.scrollTop;
 
           // Re-render all messages (content_hash changed)
           stopTTS(); // prevent dangling ttsPlayingBtn reference
           renderMessages(data.messages);
+
+          // Restore scroll position after re-render
+          if (!isUserNearBottom) {
+            chatFeed.scrollTop = savedScroll;
+          }
 
           // If new messages arrived and user is near bottom, scroll
           if (newCount > lastMessageCount) {
