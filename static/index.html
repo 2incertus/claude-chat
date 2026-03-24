@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#0A0A0A">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/static/icon.svg">
-  <link rel="stylesheet" href="/static/css/style.css?v=37">
+  <link rel="stylesheet" href="/static/css/style.css?v=38">
 </head>
 <body>
 <div class="app-shell">
@@ -23,6 +23,7 @@
       <div class="header-spacer"></div>
       <button class="search-toggle-btn" id="searchToggleBtn" title="Search"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
       <button class="history-btn" id="historyBtn" title="History"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
+      <button class="monitor-btn" id="monitorBtn" title="Log Monitor"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
       <button class="gear-btn" id="gearBtn" title="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
       <button class="new-btn" id="newBtn" title="New session">+</button>
     </div>
@@ -94,6 +95,43 @@
     </div>
     <input type="file" id="fileInput" style="display:none;" accept="image/*,application/pdf,.txt,.py,.js,.ts,.json,.md,.csv" multiple>
     <div id="uploadToast" style="display:none;position:fixed;bottom:100px;left:50%;transform:translateX(-50%);background:var(--surface2);color:var(--text);padding:10px 20px;border-radius:var(--radius-sm);font-size:0.85rem;z-index:50;box-shadow:0 4px 20px rgba(0,0,0,0.5);">Uploading...</div>
+  </div>
+
+  <!-- ===== Screen 3: Log Monitor ===== -->
+  <div class="screen hidden-right" id="screenMonitor">
+    <div class="header">
+      <button class="back-btn" id="monitorBackBtn">&#8249;</button>
+      <span class="header-title">Log Monitor</span>
+      <div class="header-spacer"></div>
+      <button class="refresh-btn" id="analyzeBtn" title="Analyze Now">Analyze</button>
+    </div>
+    <div class="monitor-content">
+      <div class="monitor-stats" id="monitorStats">
+        <div class="stat-item"><span class="stat-value" id="statEntriesMin">--</span><span class="stat-label">entries/min</span></div>
+        <div class="stat-item"><span class="stat-value stat-errors" id="statErrors">--</span><span class="stat-label">errors (5m)</span></div>
+        <div class="stat-item"><span class="stat-value stat-warnings" id="statWarnings">--</span><span class="stat-label">warnings (5m)</span></div>
+        <div class="stat-item"><span class="stat-value" id="statLastAnalysis">--</span><span class="stat-label">last analysis</span></div>
+      </div>
+      <div class="monitor-section">
+        <h3 class="monitor-section-title">Insights <span class="insight-count" id="insightCount"></span></h3>
+        <div id="insightsList" class="insights-list">
+          <div class="empty-state" style="padding:20px;font-size:0.85rem;">No insights yet. Click "Analyze" to run analysis.</div>
+        </div>
+      </div>
+      <div class="monitor-section">
+        <h3 class="monitor-section-title">Recent Logs</h3>
+        <div class="log-filters" id="logFilters">
+          <button class="filter-chip active" data-logcat="all">All</button>
+          <button class="filter-chip" data-logcat="http">HTTP</button>
+          <button class="filter-chip" data-logcat="websocket">WS</button>
+          <button class="filter-chip" data-logcat="tmux">tmux</button>
+          <button class="filter-chip" data-logcat="session">Session</button>
+          <button class="filter-chip" data-logcat="external">External</button>
+          <button class="filter-chip" data-logcat="frontend">Frontend</button>
+        </div>
+        <div id="logStream" class="log-stream"></div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -185,6 +223,6 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/static/sw.js').catch(function() {});
 }
 </script>
-<script src="/static/js/app.js?v=37"></script>
+<script src="/static/js/app.js?v=38"></script>
 </body>
 </html>
