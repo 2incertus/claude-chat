@@ -390,6 +390,23 @@ class AuthMiddleware:
 
 app.add_middleware(AuthMiddleware)
 app.add_middleware(NoCacheStaticMiddleware)
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every HTTP request with timing."""
+    req_id = str(uuid.uuid4())[:8]
+    request.state.request_id = req_id
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    elapsed = int((time.perf_counter() - t0) * 1000)
+    # Skip static files, health checks, and log endpoint from logging
+    path = request.url.path
+    if not path.startswith("/static/") and path not in ("/health", "/api/log"):
+        log("http", "request", request_id=req_id,
+            method=request.method, path=path,
+            status=response.status_code, duration_ms=elapsed)
+    return response
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------------------------------------------------------
@@ -869,6 +886,7 @@ def health():
     except Exception as e:
         tmux_ok = False
         session_count = 0
+    log("system", "health_check", tmux_ok=tmux_ok, session_count=session_count)
     return {"status": "ok", "tmux": tmux_ok, "claude_sessions": session_count}
 
 
@@ -979,6 +997,8 @@ async def get_session(name: str, lines: int = 10000):
 
     asyncio.create_task(_index_messages(name, messages, chash))
 
+    log("message", "message_parse", session=name, count=len(messages),
+        content_hash=chash, status=status)
     return {
         "name": name,
         "title": title,
@@ -1076,6 +1096,7 @@ async def send_to_session(name: str, body: SendBody):
     run_tmux("send-keys", "-t", name, "-l", text)
     run_tmux("send-keys", "-t", name, "Enter")
 
+    log("message", "message_send", session=name, text_length=len(text))
     return {"sent": True, "session": name}
 
 
@@ -1092,6 +1113,7 @@ async def send_key(name: str, body: dict):
     if key not in ALLOWED_KEYS:
         raise HTTPException(status_code=400, detail=f"Key not allowed: {key}")
     run_tmux("send-keys", "-t", name, key)
+    log("message", "key_send", session=name, key=key)
     return {"sent": True, "key": key}
 
 
@@ -1126,6 +1148,7 @@ async def kill_session_endpoint(name: str):
         still_active = _is_claude_session(name)
 
     state = "active" if still_active else "dead"
+    log("session", "session_kill", session=name, success=not still_active, state=state)
     return {"killed": not still_active, "state": state}
 
 
@@ -1140,6 +1163,7 @@ async def respawn_session(name: str):
 
     # respawn-pane with full path (respawn-pane uses a bare shell without user PATH)
     run_tmux("respawn-pane", "-t", name, "-k", "/home/ubuntu/.local/bin/claude --continue")
+    log("session", "session_respawn", session=name)
     return {"respawned": True}
 
 
@@ -1200,6 +1224,7 @@ async def dismiss_session(name: str):
     await _add_to_history(name, session_title, preview)
 
     run_tmux("kill-session", "-t", name)
+    log("session", "session_dismiss", session=name)
     return {"dismissed": True}
 
 
@@ -1211,6 +1236,7 @@ async def set_session_title(name: str, body: dict):
     if not title:
         raise HTTPException(status_code=400, detail="Title must not be empty")
     await _save_title(name, title[:60])
+    log("session", "title_set", session=name, title_length=len(title))
     return {"title": title_cache[name]}
 
 
@@ -1223,6 +1249,9 @@ async def poll_session(name: str, hash: str = "", lines: int = 10000):
 
     raw = run_tmux("capture-pane", "-t", name, "-p", "-J", "-S", f"-{lines}")
     chash = content_hash(raw)
+    if hash and hash != chash:
+        log("message", "message_hash_change", session=name,
+            old_hash=hash, new_hash=chash)
     status = get_session_status(raw)
     cost_info = extract_cost_info(raw)
 
@@ -1670,4 +1699,5 @@ async def create_session(body: dict):
 
     asyncio.create_task(_wait_and_accept_trust())
 
+    log("session", "session_create", session=name, path=path)
     return {"created": True, "name": name, "path": path}
