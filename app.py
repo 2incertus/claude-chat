@@ -381,7 +381,9 @@ class AuthMiddleware:
                 return
             elif token in valid_tokens:
                 del valid_tokens[token]
+                log("auth", "auth_token_validated", level="WARNING", result="expired")
 
+        log("auth", "auth_token_validated", level="WARNING", result="invalid")
         response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
         await response(scope, receive, send)
 
@@ -825,14 +827,19 @@ async def auth_login(body: AuthBody):
         return {"token": "auth-disabled"}
     pin_hash = hashlib.sha256(body.pin.encode()).hexdigest()
     if pin_hash != PIN_HASH:
+        log("auth", "auth_attempt", level="WARNING", success=False)
         raise HTTPException(status_code=401, detail="Invalid PIN")
     token = secrets.token_hex(32)
+    log("auth", "auth_attempt", success=True)
+    log("auth", "auth_token_issued")
     valid_tokens[token] = time.time()
     # Prune oldest if over limit
     if len(valid_tokens) > TOKEN_MAX:
         oldest = sorted(valid_tokens, key=valid_tokens.get)
-        for old in oldest[:len(valid_tokens) - TOKEN_MAX]:
+        to_prune = oldest[:len(valid_tokens) - TOKEN_MAX]
+        for old in to_prune:
             del valid_tokens[old]
+        log("auth", "auth_token_pruned", pruned=len(to_prune))
     return {"token": token}
 
 
