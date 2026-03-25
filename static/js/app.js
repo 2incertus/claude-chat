@@ -4087,20 +4087,42 @@
   });
 
   // ========== iOS Keyboard Fix ==========
-  // Prevent iOS from scrolling the page when keyboard opens
-  function resetScroll() {
+  // When the virtual keyboard opens on iOS PWA, the visual viewport shrinks
+  // but position:absolute elements stay at the original bottom (behind keyboard).
+  // We adjust the screen to match the visual viewport height.
+  function handleViewportResize() {
+    if (!window.visualViewport) return;
+    var vv = window.visualViewport;
+    var screenEl = document.getElementById('screenChat');
+    if (!screenEl) return;
+
+    var keyboardHeight = window.innerHeight - vv.height;
+    if (keyboardHeight > 100) {
+      // Keyboard is open -- shrink the screen to fit above it
+      screenEl.style.bottom = keyboardHeight + 'px';
+    } else {
+      screenEl.style.bottom = '0';
+    }
+    // Prevent page scroll
     window.scrollTo(0, 0);
     document.documentElement.scrollTop = 0;
   }
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', resetScroll);
+    window.visualViewport.addEventListener('resize', handleViewportResize);
+    window.visualViewport.addEventListener('scroll', function() {
+      window.scrollTo(0, 0);
+    });
   }
   document.addEventListener('focusin', function(e) {
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
-      setTimeout(resetScroll, 100);
-      // Also prevent the screen container from scrolling
-      var screen = e.target.closest('.screen');
-      if (screen) setTimeout(function() { screen.scrollTop = 0; }, 100);
+      setTimeout(handleViewportResize, 100);
+      setTimeout(handleViewportResize, 300);
+    }
+  });
+  document.addEventListener('focusout', function(e) {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+      var screenEl = document.getElementById('screenChat');
+      if (screenEl) screenEl.style.bottom = '0';
     }
   });
 
